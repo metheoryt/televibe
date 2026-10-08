@@ -7,7 +7,7 @@ import logging
 import uuid
 import weakref
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -35,7 +35,7 @@ class TurnSpec:
     prompt: str
     options: TurnOptions
     lane: str | None
-    env: dict[str, str]
+    env: dict[str, str] = field(repr=False)  # REQ-ENV-4: may hold tokens
     timeout_s: float
     tag: dict[str, Any]
 

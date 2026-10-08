@@ -89,3 +89,15 @@ def test_env_the_os_refuses_is_refused_at_the_call(tmp_path, env):
         check_turn_env(env)
     with pytest.raises(TelevibeError):
         Account(tmp_path, credentials=env)
+
+
+def test_turn_env_hidden_from_repr():
+    """REQ-ENV-4: a turn's env never appears in repr(), so logging a turn's spec cannot leak a token."""
+    from televibe.access import Access
+    from televibe.providers.base import TurnOptions
+    from televibe.turn import TurnSpec
+
+    spec = TurnSpec("hi", TurnOptions(Access.READ_ONLY, None, None, ()), None, {"MCP_TOKEN": "tok-456"}, 60.0, {})
+    assert "tok-456" not in repr(spec)
+    assert "MCP_TOKEN" not in repr(spec)
+    assert spec.env == {"MCP_TOKEN": "tok-456"}

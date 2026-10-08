@@ -114,6 +114,8 @@ plugins, MCP servers, hooks and session transcripts. For Claude Code this is
 - **REQ-ENV-3** — `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are refused in
   `credentials` and in a turn's `env`. An account is chosen through
   `Account`, not overridden per turn or by its own credentials.
+- **REQ-ENV-4** — A turn's `env` may hold tokens too. Like `credentials`, it is
+  never logged, never included in an event, and never included in `repr()`.
 
 ---
 
