@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass
 
 from aiogram import Bot
+from aiogram.enums import ChatAction
 from aiogram.types import Message, ReactionTypeEmoji, ReplyParameters
 
 from televibe.events import Done, Event, Failed, FailReason, Started, ToolUse
 from televibe.events import Message as AgentMessage
-from televibe.telegram.render import to_plain_text, to_rich_message
+from televibe.telegram.render import (
+    status_line,
+    to_draft_message,
+    to_plain_text,
+    to_rich_message,
+)
 
 log = logging.getLogger(__name__)
 
@@ -77,17 +84,41 @@ class Presenter:
 
     async def show(self, events: AsyncIterable[Event]) -> Message | None:
         """Consume a turn to its terminal event; return the sent answer, or None if no way of sending worked."""
-        async for event in events:
-            if isinstance(event, Started):
-                self._started_at = time.monotonic()
-                await self._react(self._reactions.working)
-            elif isinstance(event, AgentMessage):
-                self._text, self._tool = event.text, None
-            elif isinstance(event, ToolUse):
-                self._tool = event.name
-            elif isinstance(event, (Done, Failed)):
-                return await self._finish(event)
+        pulse: asyncio.Task[None] | None = None
+        try:
+            async for event in events:
+                if isinstance(event, Started):
+                    self._started_at = time.monotonic()
+                    await self._react(self._reactions.working)
+                    if pulse is None:
+                        pulse = asyncio.create_task(self._drafts() if self._private else self._typing())
+                elif isinstance(event, AgentMessage):
+                    self._text, self._tool = event.text, None
+                elif isinstance(event, ToolUse):
+                    self._tool = event.name
+                elif isinstance(event, (Done, Failed)):
+                    await _stop(pulse)  # before the answer, so no draft or typing outlives it
+                    return await self._finish(event)
+        finally:
+            await _stop(pulse)
         return None
+
+    async def _drafts(self) -> None:
+        """Re-send the draft every heartbeat_s whether or not it changed: a draft left alone expires."""
+        while True:
+            await self._quietly("draft", lambda: self._bot.send_rich_message_draft(
+                chat_id=self._chat_id, draft_id=self._message.message_id, message_thread_id=self._thread_id,
+                rich_message=to_draft_message(self._text, self._status())))
+            await asyncio.sleep(self._heartbeat_s)
+
+    async def _typing(self) -> None:
+        while True:
+            await self._quietly("typing", lambda: self._bot.send_chat_action(
+                chat_id=self._chat_id, action=ChatAction.TYPING, message_thread_id=self._thread_id))
+            await asyncio.sleep(TYPING_EVERY_S)
+
+    def _status(self) -> str:
+        return status_line(model=self._model, elapsed_s=time.monotonic() - self._started_at, tool=self._tool)
 
     async def _finish(self, end: Done | Failed) -> Message | None:
         if isinstance(end, Done):
@@ -133,3 +164,12 @@ class Presenter:
             await call()
         except Exception:
             log.warning("televibe: %s failed in chat %s", what, self._chat_id, exc_info=True)
+
+
+async def _stop(task: asyncio.Task[None] | None) -> None:
+    """Cancel the pulse and wait for it. asyncio.wait, not `await task`, so a cancellation of
+    the caller is not swallowed along with the pulse's own CancelledError."""
+    if task is None or task.done():
+        return
+    task.cancel()
+    await asyncio.wait([task])
