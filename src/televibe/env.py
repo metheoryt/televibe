@@ -22,7 +22,15 @@ def _check_str_map(env: Mapping[str, str], where: str) -> dict[str, str]:
     for key, value in env.items():
         if not isinstance(key, str) or not isinstance(value, str):
             raise TelevibeError(f"{where} must map str to str; {key!r} does not")
+        if not key or "=" in key or "\0" in key or "\0" in value:
+            raise TelevibeError(f"{where}: {key!r} is not a name and value a process environment can hold")
     return dict(env)
+
+
+def refuse_account_vars(names: Iterable[str], where: str) -> None:
+    found = sorted(ACCOUNT_VARS.intersection(names))
+    if found:
+        raise TelevibeError(f"{', '.join(found)} refused in {where}: choose the account through Account")
 
 
 def refuse_api_keys(names: Iterable[str], where: str) -> None:
@@ -37,15 +45,14 @@ def refuse_api_keys(names: Iterable[str], where: str) -> None:
 def check_credentials(credentials: Mapping[str, str]) -> dict[str, str]:
     checked = _check_str_map(credentials, "credentials")
     refuse_api_keys(checked, "credentials")
+    refuse_account_vars(checked, "credentials")
     return checked
 
 
 def check_turn_env(env: Mapping[str, str]) -> dict[str, str]:
     checked = _check_str_map(env, "a turn's env")
     refuse_api_keys(checked, "a turn's env")
-    found = sorted(ACCOUNT_VARS.intersection(checked))
-    if found:
-        raise TelevibeError(f"{', '.join(found)} refused in a turn's env: choose the account through Account")
+    refuse_account_vars(checked, "a turn's env")
     return checked
 
 

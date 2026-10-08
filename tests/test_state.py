@@ -126,3 +126,13 @@ async def test_stranded_session_runs_after_rebinding(kit: Kit):
         async with engine.turn("again", session=session, env=kit.env("resume.jsonl")) as turn:
             events = await collect(turn)
         assert isinstance(events[-1], Done)
+
+
+async def test_one_engine_per_state_dir(kit: Kit):
+    """REQ-STATE-3: a second engine on a state_dir in use raises, so stranded() never kills another engine's live turn."""
+    async with Engine(kit.tmp / "state"):
+        with pytest.raises(TelevibeError, match="state_dir"):
+            async with Engine(kit.tmp / "state"):
+                pass
+    async with Engine(kit.tmp / "state"):
+        pass

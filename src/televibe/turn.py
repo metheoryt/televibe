@@ -133,8 +133,13 @@ class Runner:
     def _emit(self, event: Event) -> None:
         if isinstance(event, Started):
             self._started = event.session
+            # A new Codex session learns its id only now; lock it from here on (REQ-SESSION-7).
+            self.engine._scheduler.adopt(self._ticket, (self.provider.kind, str(event.session.home), event.session.id))
             self._marker.update(session=event.session.dump(), session_id=event.session.id)
-            self.engine._markers.write(self.turn_id, self._marker)
+            try:
+                self.engine._markers.write(self.turn_id, self._marker)
+            except OSError as exc:  # the turn itself is fine; only recovery after a crash loses detail
+                log.warning("televibe: could not update the marker of turn %s: %s", self.turn_id, exc)
         elif isinstance(event, Message):
             self._messages.append(event.text)
         self.events.put_nowait(event)
@@ -221,7 +226,7 @@ class Runner:
             async with asyncio.timeout_at(deadline):
                 await _feed_stdin(proc.stdin, spec.prompt)
                 await asyncio.wait({reader, exited}, return_when=asyncio.FIRST_COMPLETED)
-                if reader.done():
+                if reader.done() and reader.exception() is None:
                     try:
                         await asyncio.wait_for(asyncio.shield(exited), EXIT_GRACE_S)
                     except TimeoutError:
@@ -237,6 +242,8 @@ class Runner:
             await asyncio.wait({stderr_task}, timeout=DRAIN_S)
             stderr_task.cancel()
             await asyncio.gather(reader, stderr_task, return_exceptions=True)
+        if not reader.cancelled() and (error := reader.exception()) is not None:
+            raise error  # a bug in televibe while reading; _main logs it and ends the turn
 
         returncode = proc.returncode if proc.returncode is not None else -1
         outcome = parser.finish(returncode, stderr.text())

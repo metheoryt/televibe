@@ -82,3 +82,18 @@ async def test_timeout_counts_from_process_start(kit: Kit):
         await _consume(engine, log, "b", session=kit.session(), env=kit.env(record="b.json"), timeout_s=1)
         await first
     assert ("b", "Queued") in log and ("b", "Done") in log
+
+
+async def test_session_id_learned_mid_turn_is_locked(kit: Kit):
+    """REQ-QUEUE-3, REQ-SESSION-7: a turn on the id a new session just reported waits for the turn that reported it."""
+    log: list = []
+    env = kit.env(mode="hang", after=kit.started_after(), child_pid=kit.tmp / "child.pid", record="a.json")
+    async with Engine(kit.tmp / "state", max_concurrent=4) as engine:
+        async with engine.turn("a", session=kit.session(), env=env) as first:
+            started = await anext(aiter(first))
+            assert isinstance(started, Started)
+            async with engine.turn("b", session=started.session, env=kit.env("resume.jsonl", record="b.json")) as second:
+                assert isinstance(await anext(aiter(second)), Queued)
+                second.cancel()
+            first.cancel()
+    assert not (kit.tmp / "b.json").exists()

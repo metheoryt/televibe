@@ -225,3 +225,54 @@ async def test_credentials_never_logged(engine, kit: Kit, caplog):
     events = await run(engine, kit, env=kit.env(after=1, exit=3))
     assert "s3cret-credential" not in caplog.text
     assert all("s3cret-credential" not in repr(e) for e in events)
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "match"),
+    [
+        ({"prompt": "private words \ud800"}, "prompt"),
+        ({"model": "a\0b"}, "model"),
+        ({"instructions": "a\0b"}, "instructions"),
+        ({"add_dirs": ["/a\0b"]}, "add_dirs"),
+    ],
+)
+async def test_values_the_os_refuses_raise_at_the_call(engine, kit: Kit, kwargs, match):
+    """REQ-API-2: a prompt that is not UTF-8 text, or a NUL in a command-line value, raises before anything starts."""
+    kwargs = {"prompt": "hi", **kwargs}
+    with pytest.raises(TelevibeError, match=match) as raised:
+        engine.turn(kwargs.pop("prompt"), session=kit.session(), env=kit.env(), **kwargs)
+    assert "private words" not in str(raised.value)  # the prompt is never echoed
+
+
+async def test_a_failed_marker_update_does_not_end_the_turn(engine, kit: Kit, monkeypatch, caplog):
+    """REQ-TURN-1, REQ-STATE-1: a marker that cannot be updated is logged; the turn still finishes."""
+    real_write = engine._markers.write
+
+    def write(turn_id, data):
+        if data.get("session_id"):  # the update at Started
+            raise OSError("disk full")
+        real_write(turn_id, data)
+
+    monkeypatch.setattr(engine._markers, "write", write)
+    events = await run(engine, kit, session=kit.session())
+    assert isinstance(events[0], Started) and isinstance(events[-1], Done)
+    assert "disk full" in caplog.text
+
+
+async def test_a_parser_bug_is_reported_not_swallowed(engine, kit: Kit, monkeypatch, caplog):
+    """REQ-TURN-1: an error inside televibe while reading ends the turn as an internal error, and is logged."""
+    real_parser = kit.provider.parser
+
+    def broken(session):
+        parser = real_parser(session)
+
+        def feed(record):
+            raise RuntimeError("parser bug")
+
+        parser.feed = feed
+        return parser
+
+    monkeypatch.setattr(kit.provider, "parser", broken)
+    events = await run(engine, kit)
+    assert events[-1].reason is FailReason.PROVIDER_ERROR and "parser bug" in events[-1].detail
+    assert "parser bug" in caplog.text

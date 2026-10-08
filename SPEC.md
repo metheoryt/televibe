@@ -105,8 +105,9 @@ plugins, MCP servers, hooks and session transcripts. For Claude Code this is
   `OPENAI_API_KEY` are refused in `credentials` and in a turn's `env`
   (`TelevibeError` at the call). televibe v1 runs agents on subscriptions only,
   and an API key would bill the API without anyone noticing.
-- **REQ-ENV-3** — `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are refused in a turn's
-  `env`. An account is chosen through `Account`, not overridden per turn.
+- **REQ-ENV-3** — `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are refused in
+  `credentials` and in a turn's `env`. An account is chosen through
+  `Account`, not overridden per turn or by its own credentials.
 
 ---
 
@@ -381,6 +382,9 @@ history is the agent's own transcript, kept in the account.
   The `session` there is not bound to a provider:
   `provider.load_session(stranded.session.dump())` gives one a turn can run
   on, and `engine.turn` with the unbound one raises `TelevibeError`.
+  One engine at a time uses a `state_dir`: entering a second `Engine` on a
+  `state_dir` that is in use raises `TelevibeError`, so `stranded()` never
+  reports, or kills, a live turn of another engine.
 - **REQ-STATE-4** — Before returning, `stranded()` kills the recorded process
   group, but only if its leader still exists **and** its start time matches
   the recorded one. A recycled pid is never killed. `killed` says whether a

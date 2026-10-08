@@ -55,6 +55,12 @@ class Scheduler:
         self._sessions.discard(ticket.session_key)  # type: ignore[arg-type]
         self._dispatch()
 
+    def adopt(self, ticket: Ticket, session_key: tuple[str, str, str]) -> None:
+        """Lock a session id a running turn learned only after it started (REQ-SESSION-7)."""
+        if ticket.held and ticket.session_key is None and session_key not in self._sessions:
+            ticket.session_key = session_key
+            self._sessions.add(session_key)
+
     def withdraw(self, ticket: Ticket) -> None:
         if ticket in self._waiting:
             self._waiting.remove(ticket)

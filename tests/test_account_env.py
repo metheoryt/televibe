@@ -73,3 +73,19 @@ def test_child_env_is_an_allowlist(tmp_path):
         "CLAUDE_CONFIG_DIR": str(tmp_path.resolve()),
         "TOKEN": "from-credentials", "SHARED": "turn", "EXTRA": "1",
     }
+
+
+@pytest.mark.parametrize("name", ["CLAUDE_CONFIG_DIR", "CODEX_HOME"])
+def test_account_vars_refused_in_credentials(tmp_path, name):
+    """REQ-ENV-3, REQ-ACCOUNT-2: credentials cannot point the agent at another account."""
+    with pytest.raises(TelevibeError, match=name):
+        Account(tmp_path, credentials={name: "/person/.claude"})
+
+
+@pytest.mark.parametrize("env", [{"": "x"}, {"A=B": "x"}, {"A\0": "x"}, {"A": "x\0y"}])
+def test_env_the_os_refuses_is_refused_at_the_call(tmp_path, env):
+    """REQ-API-2: names and values the OS cannot pass to a process raise at the call."""
+    with pytest.raises(TelevibeError):
+        check_turn_env(env)
+    with pytest.raises(TelevibeError):
+        Account(tmp_path, credentials=env)

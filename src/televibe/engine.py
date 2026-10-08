@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import logging
 import math
@@ -64,13 +65,26 @@ class Engine:
         self._scheduler = Scheduler(max_concurrent)
         self._runners: dict[str, Runner] = {}
         self._state = "new"
+        self._lock_fd: int | None = None
 
     async def __aenter__(self) -> Engine:
         if self._state != "new":
             raise TelevibeError("an Engine is entered once")
         self._markers.open()
+        self._lock()
         self._state = "open"
         return self
+
+    def _lock(self) -> None:
+        """One engine per state_dir, so stranded() never sees another engine's live turn (REQ-STATE-3)."""
+        state_dir = self._markers.dir.parent
+        fd = os.open(state_dir / "lock", os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            os.close(fd)
+            raise TelevibeError(f"state_dir {state_dir} is in use by another Engine") from None
+        self._lock_fd = fd
 
     async def __aexit__(self, *exc_info: object) -> None:
         self._state = "closed"
@@ -78,6 +92,9 @@ class Engine:
         for runner in runners:
             runner.cancel("engine closed")  # REQ-CANCEL-7
         await asyncio.gather(*(runner.wait_ended() for runner in runners), return_exceptions=True)
+        if self._lock_fd is not None:
+            os.close(self._lock_fd)  # closing the descriptor releases the lock
+            self._lock_fd = None
 
     def _require_open(self) -> None:
         if self._state != "open":
@@ -100,6 +117,10 @@ class Engine:
         self._require_open()
         if not isinstance(prompt, str) or not prompt:
             raise TelevibeError("prompt must be a non-empty str")
+        try:
+            prompt.encode()
+        except UnicodeEncodeError:
+            raise TelevibeError("prompt must be text that encodes to UTF-8 (it holds a lone surrogate)") from None
         if not isinstance(session, Session):
             raise TelevibeError(f"session must be a Session, got {type(session).__name__}")
         provider = session._bound
@@ -111,10 +132,14 @@ class Engine:
         for name, value in (("lane", lane), ("model", model), ("instructions", instructions)):
             if value is not None and not isinstance(value, str):
                 raise TelevibeError(f"{name} must be a str or None")
+            if value is not None and "\0" in value:
+                raise TelevibeError(f"{name} must not contain a NUL character")
         if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or not math.isfinite(timeout_s) or timeout_s <= 0:
             raise TelevibeError("timeout_s must be a positive, finite number of seconds")
         if isinstance(add_dirs, (str, bytes, os.PathLike)):
             raise TelevibeError("add_dirs must be a sequence of paths, not one path")
+        if any("\0" in os.fspath(d) for d in add_dirs if isinstance(d, (str, os.PathLike))):
+            raise TelevibeError("add_dirs must not contain a NUL character")
         dirs = tuple(Path(d).expanduser().resolve() for d in add_dirs)
         turn_env = check_turn_env(env)
         try:
