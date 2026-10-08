@@ -28,3 +28,15 @@ def test_layer_imports_with_aiogram():
     """REQ-TGPKG-3: with aiogram installed, the layer imports."""
     result = _python("import televibe.telegram")
     assert result.returncode == 0, result.stderr
+
+
+def test_public_surface():
+    """REQ-TGPKG-4: televibe.telegram exports exactly the pinned names, and render is its submodule."""
+    import televibe.telegram as layer
+    from televibe.telegram import render
+
+    assert sorted(layer.__all__) == [
+        "Chain", "ChainStore", "Chains", "MemoryChainStore", "Presenter", "Reactions", "Texts", "render",
+    ]
+    assert all(hasattr(layer, name) for name in layer.__all__)
+    assert layer.render is render
