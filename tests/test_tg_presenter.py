@@ -87,6 +87,7 @@ async def test_every_send_failing_returns_none_without_raising(caplog):
     assert await Presenter(bot, message(thread_id=5)).show(script(Started(SESSION), DONE)) is None
     assert len(bot.sends()) == 3
     assert caplog.text.count("televibe: sending the answer") == 3
+    assert bot.reactions()[-1] == "🤷"  # nothing was sent, so the turn is not marked done
 
 
 async def test_forbidden_reactions_do_not_stop_the_answer():
@@ -192,3 +193,31 @@ async def test_cancellation_propagates_and_stops_the_pulse(monkeypatch):
     count = len(bot.calls)
     await asyncio.sleep(0.1)
     assert len(bot.calls) == count and not bot.sends()
+
+
+async def test_flood_control_is_waited_out_with_the_same_form():
+    """REQ-PRESENT-6: a rate limit is waited out and the same form is retried, not stepped down."""
+    bot = FakeBot(flood={"send_rich_message": 2})
+    sent = await Presenter(bot, message(thread_id=5)).show(script(Started(SESSION), DONE))
+    assert [name for name, _ in bot.sends()] == ["send_rich_message"] * 3
+    assert sent is not None and bot.reactions()[-1] == "👌"
+
+
+async def test_endless_flood_control_still_ends(monkeypatch):
+    """REQ-PRESENT-2, REQ-PRESENT-6: a rate limit that never lifts ends in None after a bounded number of tries."""
+    bot = FakeBot(flood={"send_rich_message": 99, "send_message": 99})
+    sent = await asyncio.wait_for(Presenter(bot, message(thread_id=5)).show(script(Started(SESSION), DONE)), 5)
+    assert sent is None
+    assert len(bot.sends()) < 30
+
+
+async def test_hanging_reaction_does_not_hold_the_turn(monkeypatch):
+    """REQ-PRESENT-7: a reaction call that never returns is given up on; the pulse runs and the answer goes out."""
+    monkeypatch.setattr(presenter_module, "QUIET_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(presenter_module, "TYPING_EVERY_S", 0.02)
+    bot = FakeBot(hang=("set_message_reaction",))
+    presenter = Presenter(bot, message())
+    await asyncio.wait_for(presenter.accepted(), 2)
+    sent = await asyncio.wait_for(presenter.show(script(Started(SESSION), 0.2, DONE)), 2)
+    assert sent is not None
+    assert "send_chat_action" in bot.names()

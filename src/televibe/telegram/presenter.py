@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from aiogram import Bot
 from aiogram.enums import ChatAction
+from aiogram.exceptions import TelegramRetryAfter
 from aiogram.types import Message, ReactionTypeEmoji, ReplyParameters
 
 from televibe.events import Done, Event, Failed, FailReason, Started, ToolUse
@@ -25,6 +26,12 @@ log = logging.getLogger(__name__)
 
 TYPING_EVERY_S = 4.0
 """Telegram shows a typing action for about five seconds."""
+QUIET_TIMEOUT_S = 5.0
+"""How long a reaction, draft or typing action may take before it is given up on."""
+RETRY_WAIT_MAX_S = 30.0
+"""The most time sending the answer spends waiting out Telegram's flood control, over all tries."""
+_FLOOD_RETRIES = 3
+"""Retries of one form of the answer under flood control, before the next form is tried."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,11 +136,14 @@ class Presenter:
             text = f"{end.partial}\n\n{reason}" if end.partial.strip() else reason
             reaction = self._reactions.failed
         sent = await self._send(text)
-        await self._react(reaction)
+        await self._react(reaction if sent is not None else self._reactions.failed)
         return sent
 
     async def _send(self, text: str) -> Message | None:
-        """A turn never ends in silence (REQ-PRESENT-6): rich, plain, plain outside the topic."""
+        """A turn never ends in silence (REQ-PRESENT-6): rich, plain, plain outside the topic.
+
+        Flood control is waited out and the same form retried, within RETRY_WAIT_MAX_S in all:
+        stepping down would hit the same limit. Any other failure steps down to the next form."""
         reply = ReplyParameters(message_id=self._message.message_id, allow_sending_without_reply=True)
         attempts: list[tuple[str, Callable[[], Awaitable[Message]]]] = [
             ("a rich message", lambda: self._bot.send_rich_message(
@@ -146,11 +156,20 @@ class Presenter:
         if self._thread_id is not None:
             attempts.append(("plain text outside the topic", lambda: self._bot.send_message(
                 chat_id=self._chat_id, text=to_plain_text(text), parse_mode=None, reply_parameters=reply)))
+        waited = 0.0
         for what, attempt in attempts:
-            try:
-                return await attempt()
-            except Exception:
-                log.warning("televibe: sending the answer as %s failed in chat %s", what, self._chat_id, exc_info=True)
+            for retry in range(_FLOOD_RETRIES + 1):
+                try:
+                    return await attempt()
+                except TelegramRetryAfter as exc:
+                    if retry == _FLOOD_RETRIES or waited + exc.retry_after > RETRY_WAIT_MAX_S:
+                        log.warning("televibe: sending the answer as %s hit flood control in chat %s", what, self._chat_id)
+                        break
+                    waited += exc.retry_after
+                    await asyncio.sleep(exc.retry_after)
+                except Exception:
+                    log.warning("televibe: sending the answer as %s failed in chat %s", what, self._chat_id, exc_info=True)
+                    break
         log.error("televibe: every way of sending the answer failed in chat %s", self._chat_id)
         return None
 
@@ -159,9 +178,13 @@ class Presenter:
             chat_id=self._chat_id, message_id=self._message.message_id, reaction=[ReactionTypeEmoji(emoji=emoji)]))
 
     async def _quietly(self, what: str, call: Callable[[], Awaitable[object]]) -> None:
-        """A failed reaction, draft or typing action is logged and ignored (REQ-PRESENT-7)."""
+        """A failed reaction, draft or typing action is logged and ignored (REQ-PRESENT-7).
+
+        It gets QUIET_TIMEOUT_S, not aiogram's minute-long request timeout: a stalled reaction
+        must not hold the answer, and through it the chain."""
         try:
-            await call()
+            async with asyncio.timeout(QUIET_TIMEOUT_S):
+                await call()
         except Exception:
             log.warning("televibe: %s failed in chat %s", what, self._chat_id, exc_info=True)
 

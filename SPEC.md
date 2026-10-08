@@ -474,6 +474,7 @@ heartbeat_s=8.0, model=None)` shows one turn started by `message`.
 | `Started` | `reactions.working` (👨‍💻) | typing in a group, a live draft in a private chat |
 | `Done`, answer sent | `reactions.done` (👌) | — |
 | `Failed`, answer sent | `reactions.failed` (🤷) | — |
+| no way of sending worked | `reactions.failed` (🤷) | — |
 
 - **REQ-PRESENT-1** — `accepted()` sets the `queued` reaction. The bot calls it
   before `chains.turn`, so a message waiting in a chain is marked at once.
@@ -494,9 +495,13 @@ heartbeat_s=8.0, model=None)` shows one turn started by `message`.
   `done` or `failed`.
 - **REQ-PRESENT-6** — **A turn never ends in silence.** Sending tries, in
   order: a rich message, plain text, plain text outside the forum topic. Each
-  failure is logged and the next is tried.
+  failure is logged and the next is tried. Flood control is the exception: it
+  is waited out and the same form is retried, a few times and at most 30
+  seconds in all, since a plainer form would hit the same limit.
 - **REQ-PRESENT-7** — A failed reaction, draft or typing action is logged and
-  ignored. A chat may forbid reactions; the answer still arrives.
+  ignored. A chat may forbid reactions; the answer still arrives. Each such
+  call gets a few seconds; one that takes longer is given up on, so it cannot
+  hold the answer or the chain.
   `show` raises nothing for a Telegram error; it does propagate cancellation.
 - **REQ-PRESENT-8** — `Reactions` and `Texts` are frozen dataclasses with
   English defaults. A bot replaces any of them. The default reactions are all

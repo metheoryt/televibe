@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import Chat, Message, User
 
 from televibe.session import Session
@@ -43,12 +43,20 @@ class FakeBot:
     """Records every call as (method, kwargs).
 
     `fail` maps a method to how many of its calls raise a Telegram error (99 = all).
+    `flood` maps a method to how many of its calls hit flood control (retry after 0 s; 99 = all).
     `hang` names methods whose calls never return.
     """
 
-    def __init__(self, *, fail: Mapping[str, int] | None = None, hang: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        *,
+        fail: Mapping[str, int] | None = None,
+        flood: Mapping[str, int] | None = None,
+        hang: tuple[str, ...] = (),
+    ) -> None:
         self.calls: list[tuple[str, dict]] = []
         self.fail = dict(fail or {})
+        self.flood = dict(flood or {})
         self.hang = set(hang)
         self._last_id = 1000
 
@@ -65,6 +73,9 @@ class FakeBot:
         self.calls.append((name, kwargs))
         if name in self.hang:
             await asyncio.Event().wait()
+        if self.flood.get(name, 0) > 0:
+            self.flood[name] -= 1
+            raise TelegramRetryAfter(method=None, message=f"Too Many Requests: {name}", retry_after=0)
         if self.fail.get(name, 0) > 0:
             self.fail[name] -= 1
             raise TelegramBadRequest(method=None, message=f"Bad Request: {name} rejected")
