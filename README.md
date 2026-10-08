@@ -9,7 +9,8 @@ televibe starts the agent, turns its output into common events
 walks away. What to do with the output is the caller's business: televibe never
 sends a message anywhere.
 
-Status: specification only. The implementation follows.
+Status: v1 implemented, not yet published. Tests: `uv run pytest`; live tests
+against real agents: see `tests/test_live.py`.
 
 - [SPEC.md](SPEC.md) is the specification. It is the law: numbered
   requirements, each claimed by a test.
