@@ -22,3 +22,23 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 timeout = 60
 markers = ["live: runs a real agent CLI; skipped unless TELEVIBE_LIVE_<PROVIDER>_HOME is set"]
+
+[tool.ty.environment]
+python-version = "3.12"
+python = "./.venv"
+root = ["./src", "./tests"]
+
+[tool.ty.src]
+include = ["src", "tests"]
+exclude = ["**/__pycache__", "build", "dist"]
+respect-ignore-files = true
+
+[tool.ty.terminal]
+error-on-warning = false
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ANN"]
+ignore = ["ANN401", "E501"]   # no formatter yet; line length is not this config's job
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN"]
