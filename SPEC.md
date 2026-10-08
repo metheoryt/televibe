@@ -124,12 +124,15 @@ inside the session.
 ### SESSION
 
 - **REQ-SESSION-1** — `Session` holds the provider kind, the account `home`,
-  `cwd` (resolved to an absolute path at creation), and `id` (str or None). It
-  is immutable.
+  `cwd` (resolved to an absolute path at creation), `id` (str or None), and
+  `started` (bool: whether the agent already has this session, so the next
+  turn resumes it). It is immutable.
 - **REQ-SESSION-2** — Sessions are created only by a provider:
-  `provider.new_session(cwd, id=None)` for a new one, and
+  `provider.new_session(cwd, id=None)` for a new one,
+  `provider.resume_session(cwd, id)` for one the agent already has, and
   `provider.load_session(text)` for one stored earlier. `load_session` raises
   if the stored provider kind or account `home` differs from the provider's.
+  The session in `Started`, `Done` and `Failed` has `started` set.
 - **REQ-SESSION-3** — `session.dump()` returns a string that `load_session`
   accepts, and that round-trips to an equal session. The string is JSON and
   contains no credentials.
@@ -139,7 +142,11 @@ inside the session.
 - **REQ-SESSION-5** — `new_session(cwd, id=...)` with a fixed id is accepted
   only by a provider that lets the caller choose the id. Claude Code does
   (`--session-id`); Codex does not, and raises. A caller can then derive ids
-  from its own keys and keep no table of them.
+  from its own keys and keep no table of them: `new_session(cwd, id=X)` for
+  the first turn, `resume_session(cwd, X)` for every later one. Measured on
+  2026-10-08 (Claude Code 2.1.294): Claude Code keys a transcript by
+  directory and id, and `--session-id X` in another directory silently starts
+  an empty session with the same id.
 - **REQ-SESSION-6** — A new session without a fixed id gets its id from the
   agent. The id reaches the caller in `Started` and in the terminal event.
   For Claude Code, televibe generates a UUID4 and passes it as `--session-id`.
@@ -177,9 +184,10 @@ Events, in the order they can appear:
   requirement the library exists to keep.
 - **REQ-TURN-2** — `Queued` is emitted only if the turn cannot start at once.
   It is emitted at most once.
-- **REQ-TURN-3** — `Started` is emitted exactly once for a turn whose process
-  started, before any `Message` or `ToolUse`. `Started.session` has a
-  non-empty id.
+- **REQ-TURN-3** — `Started` is emitted exactly once for a turn whose agent
+  reported its session, before any `Message` or `ToolUse`. `Started.session`
+  has a non-empty id. A turn that fails before the agent reports a session
+  has no `Started`.
 - **REQ-TURN-4** — `Failed.session` is the session with its id when the agent
   reported one before failing, and `None` otherwise. `Failed.partial` is the
   text of the `Message` events emitted before the failure, joined with blank
@@ -188,6 +196,7 @@ Events, in the order they can appear:
   iteration raises `TelevibeError`.
 - **REQ-TURN-6** — Entering the turn's context is what queues it. Building a
   `Turn` without entering it starts nothing.
+  Iterating a turn that was not entered raises `TelevibeError`.
 - **REQ-TURN-7** — A turn whose agent reports an error result ends in
   `Failed`, never in `Done`. Claude Code's `result` event with
   `is_error: true` is such a report.
@@ -240,7 +249,8 @@ Events, in the order they can appear:
   subscription.
 - **REQ-CANCEL-6** — A `Turn` that is garbage-collected while its process
   still runs is killed by a finalizer, and a warning is logged. This is the
-  backstop for a caller who iterated without the context manager.
+  backstop for a caller who entered the turn without `async with` (calling
+  `__aenter__` directly) and dropped it.
 - **REQ-CANCEL-7** — Closing the engine cancels every queued and running turn.
   Each ends with `Failed(cancelled)` and `detail` saying the engine closed.
 
@@ -269,6 +279,11 @@ Events, in the order they can appear:
     containing `No conversation found with session ID`;
   - Codex: a non-zero exit, no `thread.started` event, plus stderr containing
     `no rollout found for thread id`.
+- **REQ-RUN-7** — A turn ends when the agent's process has exited. After a
+  terminal record the agent gets 10 seconds to exit, then it is killed. Once
+  the agent's process exits, its pipes get 2 seconds to drain, and then
+  everything left in its process group is killed. A background command that
+  holds the agent's stdout cannot keep the turn open.
 
 ---
 
@@ -319,11 +334,14 @@ same credentials. It is a strong default, but it is not containment.
 
 ### CODEX
 
-- **REQ-CODEX-1** — A new session runs
-  `codex exec --json --skip-git-repo-check -C <cwd>` with the access flag. A
-  resumed one runs `codex exec resume --json --skip-git-repo-check <id>`. Both
-  add `-m` when `model` is set and one `--add-dir` per entry of `add_dirs`.
-  The prompt goes to stdin as `-` (REQ-RUN-1).
+- **REQ-CODEX-1** — Every turn runs
+  `codex exec --json --skip-git-repo-check -C <cwd>` followed by the access
+  flag, `-m` when `model` is set, one `--add-dir` per entry of `add_dirs`,
+  and `-c developer_instructions=...` when `instructions` is set. A resumed
+  session then adds `resume <id>`. The prompt goes to stdin, named by a final
+  `-` (REQ-RUN-1). These options come before `resume` because
+  `codex exec resume` rejects `--sandbox`, `-C` and `--add-dir` after it
+  (exit code 2; measured with codex-cli 0.161.0 on 2026-10-08).
 - **REQ-CODEX-2** — `instructions` is passed as
   `-c developer_instructions=<value>`, where the value is a TOML basic string.
   Quotes, backslashes and newlines in `instructions` survive: a test passes
@@ -357,6 +375,9 @@ history is the agent's own transcript, kept in the account.
   left by an earlier process: `turn_id`, `tag`, `session` (with its id, if it
   was known), `started_at`, and `killed` (bool). It is called by the caller,
   typically right after entering the engine.
+  The `session` there is not bound to a provider:
+  `provider.load_session(stranded.session.dump())` gives one a turn can run
+  on, and `engine.turn` with the unbound one raises `TelevibeError`.
 - **REQ-STATE-4** — Before returning, `stranded()` kills the recorded process
   group, but only if its leader still exists **and** its start time matches
   the recorded one. A recycled pid is never killed. `killed` says whether a
@@ -376,9 +397,10 @@ measurement before it becomes a requirement.
 - **Codex `turn.failed` and other error records.** Only the success stream and
   the missing-session case have been seen. Until a recording exists, a turn
   that ends without `turn.completed` is `provider_error` (REQ-RUN-5).
-- **Whether `codex exec resume` accepts `--sandbox`, `-C` and `--add-dir`.** Its
-  help lists only `-c`. If it does not accept them, access goes through
-  `-c sandbox_mode=...`, and the directory comes from the process cwd.
+- **Whether the options before `resume` take effect on a resumed turn.**
+  codex-cli 0.161.0 parses them there. Their effect on the sandbox and the
+  directory is measured when the fixtures are recorded (plan Task 3), and
+  this bullet is replaced by the result.
 - **Whether Codex `developer_instructions` persists across `resume`** or must
   be passed again. It also depends on whether it adds to Codex's base
   instructions or replaces any of them. Only that it takes effect has been
