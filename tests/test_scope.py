@@ -19,19 +19,22 @@ def _imported_roots(path: Path) -> set[str]:
 
 
 def test_no_chat_client_imports():
-    """REQ-SCOPE-1: no module under src/ imports a chat client."""
-    offenders = {
-        str(path.relative_to(ROOT)): sorted(_imported_roots(path) & CHAT_CLIENTS)
-        for path in (ROOT / "src").rglob("*.py")
-        if _imported_roots(path) & CHAT_CLIENTS
-    }
+    """REQ-SCOPE-1: only televibe/telegram/ imports a chat client, and that client is aiogram."""
+    layer = ROOT / "src" / "televibe" / "telegram"
+    offenders = {}
+    for path in (ROOT / "src").rglob("*.py"):
+        allowed = {"aiogram"} if layer in path.parents else set()
+        found = (_imported_roots(path) & CHAT_CLIENTS) - allowed
+        if found:
+            offenders[str(path.relative_to(ROOT))] = sorted(found)
     assert offenders == {}
 
 
 def test_no_runtime_dependencies():
-    """REQ-SCOPE-2: pyproject.toml declares no runtime dependencies."""
+    """REQ-SCOPE-2, REQ-TGPKG-1: no runtime dependencies; the only extra is `telegram` with aiogram."""
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
     assert project["dependencies"] == []
+    assert project.get("optional-dependencies", {}) == {"telegram": ["aiogram>=3.31,<4"]}
 
 
 def test_python_floor_and_windows_refusal():
