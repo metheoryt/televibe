@@ -2,13 +2,13 @@ import asyncio
 import json
 
 import pytest
-
 from conftest import Kit, marker_files, until
+from tgkit import message
+
 from televibe.errors import TelevibeError
 from televibe.events import Done, Failed, FailReason, Started
 from televibe.telegram.chains import Chains
 from televibe.telegram.store import MemoryChainStore
-from tgkit import message
 
 
 class RecordingStore(MemoryChainStore):

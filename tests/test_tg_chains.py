@@ -1,9 +1,9 @@
 import pytest
+from tgkit import message
 
 from televibe.errors import TelevibeError
 from televibe.telegram.chains import Chain, Chains
 from televibe.telegram.store import MemoryChainStore
-from tgkit import message
 
 
 async def test_find_follows_the_reply():
