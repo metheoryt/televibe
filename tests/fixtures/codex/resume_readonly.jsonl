@@ -1,0 +1,8 @@
+{"type": "thread.started", "thread_id": "{{SESSION_ID}}"}
+{"type": "item.completed", "item": {"id": "item_0", "type": "error", "message": "clamping SessionEnd hook timeout to 3s in {{PATH}}"}}
+{"type": "turn.started"}
+{"type": "item.completed", "item": {"id": "item_1", "type": "agent_message", "text": "I’ll run both commands and report the results.\n"}}
+{"type": "item.started", "item": {"id": "item_2", "type": "command_execution", "command": "/bin/zsh -lc pwd", "aggregated_output": "", "exit_code": null, "status": "in_progress"}}
+{"type": "item.completed", "item": {"id": "item_2", "type": "command_execution", "command": "/bin/zsh -lc pwd", "aggregated_output": "{{PATH}}\n", "exit_code": 0, "status": "completed"}}
+{"type": "item.completed", "item": {"id": "item_3", "type": "agent_message", "text": "`pwd` output:\n```text\n{{PATH}}\n```\n\nThe second command failed: `operation not permitted: made-by-resume.txt` (exit code 1)."}}
+{"type": "turn.completed", "usage": {"input_tokens": 80991, "cached_input_tokens": 60032, "cache_write_input_tokens": 0, "output_tokens": 145, "reasoning_output_tokens": 0}}

@@ -342,6 +342,9 @@ same credentials. It is a strong default, but it is not containment.
   `-` (REQ-RUN-1). These options come before `resume` because
   `codex exec resume` rejects `--sandbox`, `-C` and `--add-dir` after it
   (exit code 2; measured with codex-cli 0.161.0 on 2026-10-08).
+  Measured on 2026-10-08: `--sandbox read-only` and `-C` placed before
+  `resume` hold on the resumed turn (a write was refused; `pwd` was the `-C`
+  directory while the process ran in `/`).
 - **REQ-CODEX-2** — `instructions` is passed as
   `-c developer_instructions=<value>`, where the value is a TOML basic string.
   Quotes, backslashes and newlines in `instructions` survive: a test passes
@@ -397,10 +400,6 @@ measurement before it becomes a requirement.
 - **Codex `turn.failed` and other error records.** Only the success stream and
   the missing-session case have been seen. Until a recording exists, a turn
   that ends without `turn.completed` is `provider_error` (REQ-RUN-5).
-- **Whether the options before `resume` take effect on a resumed turn.**
-  codex-cli 0.161.0 parses them there. Their effect on the sandbox and the
-  directory is measured when the fixtures are recorded (plan Task 3), and
-  this bullet is replaced by the result.
 - **Whether Codex `developer_instructions` persists across `resume`** or must
   be passed again. It also depends on whether it adds to Codex's base
   instructions or replaces any of them. Only that it takes effect has been
