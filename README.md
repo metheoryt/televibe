@@ -15,7 +15,8 @@ The optional Telegram layer does: `pip install 'televibe[telegram]'` adds
 `televibe.telegram`, which shows a turn in a chat (reactions, typing or a live
 draft, the answer) and keeps one session per reply chain. It is a set of parts
 for an aiogram bot, not a framework. Every reaction can be replaced, and
-`Reactions(done=None)` leaves no reaction once the answer is sent. A live
+`Reactions(done=None, failed_when_sent=False)` leaves a reaction only when
+nothing could be sent at all. A live
 draft shows the usage ("5h 35% · 7d 13%"); `Texts` relabels it and words the
 limit message, and `Presenter(tz=...)` sets the zone of its reset time. See SPEC.md
 section 12.

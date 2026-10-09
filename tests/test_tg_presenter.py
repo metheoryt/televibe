@@ -152,6 +152,21 @@ async def test_done_none_still_marks_failure():
     assert sent is None and bot.reactions() == ["👨‍💻", "🤷"]
 
 
+async def test_failed_when_sent_false_clears_the_reaction_after_a_failure_text():
+    """REQ-PRESENT-5, REQ-PRESENT-8: a sent failure text leaves no reaction; only a turn that sent nothing gets 🤷."""
+    reactions = Reactions(done=None, failed="🥴", failed_when_sent=False)
+    bot = FakeBot()
+    sent = await Presenter(bot, message(), reactions=reactions).show(
+        script(Started(SESSION), Failed(FailReason.TIMEOUT, SESSION, "", "")))
+    assert sent is not None and bot.reactions() == ["👨‍💻", None]
+    assert bot.names()[-2] == "send_rich_message"
+
+    bot = FakeBot(fail={"send_rich_message": 99, "send_message": 99})
+    sent = await Presenter(bot, message(), reactions=reactions).show(
+        script(Started(SESSION), Failed(FailReason.TIMEOUT, SESSION, "", "")))
+    assert sent is None and bot.reactions() == ["👨‍💻", "🥴"]
+
+
 REJECTED = Limits(LimitWindow(1.0, 1791540600), LimitWindow(0.39, 1791986400), rejected=True, resets_at=1791540600)
 LIMIT_FAILED = Failed(FailReason.USAGE_LIMIT, SESSION, "You've hit your session limit", "")
 

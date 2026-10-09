@@ -40,12 +40,14 @@ class Reactions:
     """The reaction on the bot's trigger message at each moment of a turn. All are on the Bot API's list.
 
     `done` may be None: the answer then clears the reaction instead, for a bot whose reply is
-    signal enough that the turn is over."""
+    signal enough that the turn is over. With `failed_when_sent` False a sent failure text
+    clears the reaction too, and `failed` marks only a turn whose every send failed."""
 
     queued: str = "👀"
     working: str = "👨‍💻"
     done: str | None = "👌"
     failed: str = "🤷"
+    failed_when_sent: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,7 +173,7 @@ class Presenter:
             log.warning("televibe: turn failed in chat %s (%s): %s", self._chat_id, end.reason, end.detail)
             reason = self._reason_text(end.reason)
             text = f"{end.partial}\n\n{reason}" if end.partial.strip() else reason
-            reaction = self._reactions.failed
+            reaction = self._reactions.failed if self._reactions.failed_when_sent else None
         sent = await self._send(text)
         await self._react(reaction if sent is not None else self._reactions.failed)
         return sent

@@ -492,7 +492,7 @@ heartbeat_s=8.0, model=None, tz=UTC)` shows one turn started by `message`.
 | `accepted()` | `reactions.queued` (👀) | — |
 | `Started` | `reactions.working` (👨‍💻) | typing in a group, a live draft in a private chat |
 | `Done`, answer sent | `reactions.done` (👌); cleared if `done` is `None` | — |
-| `Failed`, answer sent | `reactions.failed` (🤷) | — |
+| `Failed`, answer sent | `reactions.failed` (🤷); cleared if `failed_when_sent` is `False` | — |
 | no way of sending worked | `reactions.failed` (🤷) | — |
 
 - **REQ-PRESENT-1** — `accepted()` sets the `queued` reaction. The bot calls it
@@ -515,7 +515,8 @@ heartbeat_s=8.0, model=None, tz=UTC)` shows one turn started by `message`.
   datetime in `tz`; with none known the chat reads `provider_error`, and a text
   that does not format is sent as it is. Then the reaction becomes
   `done` or `failed`; when `done` is `None`, a sent `Done` answer clears the
-  reaction instead.
+  reaction instead, and when `failed_when_sent` is `False`, so does a sent
+  `Failed` text. When nothing could be sent the reaction is always `failed`.
 - **REQ-PRESENT-6** — **A turn never ends in silence.** Sending tries, in
   order: a rich message, plain text, plain text outside the forum topic. Each
   failure is logged and the next is tried. Flood control is the exception: it
@@ -529,7 +530,9 @@ heartbeat_s=8.0, model=None, tz=UTC)` shows one turn started by `message`.
 - **REQ-PRESENT-8** — `Reactions` and `Texts` are frozen dataclasses with
   English defaults. A bot replaces any of them. The default reactions are all
   in the Bot API's list of reactions a bot may set. `Reactions.done` may be
-  `None`, for a bot whose answer is signal enough that the turn is over.
+  `None`, for a bot whose answer is signal enough that the turn is over, and
+  `Reactions.failed_when_sent` (default `True`) may be `False`, for a bot whose
+  failure text is signal enough too.
   `Texts` also holds the status line's labels for the usage windows,
   `five_hour` and `seven_day`. `Texts.for_reason(reason, resets_at=None)` gives a reason's
   text, filling in the `usage_limit` template as REQ-PRESENT-5 says.
