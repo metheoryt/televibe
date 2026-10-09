@@ -12,7 +12,9 @@ sends a message anywhere.
 The optional Telegram layer does: `pip install 'televibe[telegram]'` adds
 `televibe.telegram`, which shows a turn in a chat (reactions, typing or a live
 draft, the answer) and keeps one session per reply chain. It is a set of parts
-for an aiogram bot, not a framework. See SPEC.md section 12.
+for an aiogram bot, not a framework. Every reaction can be replaced, and
+`Reactions(done=None)` leaves no reaction once the answer is sent. See SPEC.md
+section 12.
 
 Install: `pip install televibe`, or `pip install 'televibe[telegram]'` with the
 Telegram layer. Python 3.12+, Linux and macOS.

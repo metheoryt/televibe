@@ -474,7 +474,7 @@ heartbeat_s=8.0, model=None)` shows one turn started by `message`.
 |---|---|---|
 | `accepted()` | `reactions.queued` (👀) | — |
 | `Started` | `reactions.working` (👨‍💻) | typing in a group, a live draft in a private chat |
-| `Done`, answer sent | `reactions.done` (👌) | — |
+| `Done`, answer sent | `reactions.done` (👌); cleared if `done` is `None` | — |
 | `Failed`, answer sent | `reactions.failed` (🤷) | — |
 | no way of sending worked | `reactions.failed` (🤷) | — |
 
@@ -494,7 +494,8 @@ heartbeat_s=8.0, model=None)` shows one turn started by `message`.
 - **REQ-PRESENT-5** — `Done` sends `Done.text`. `Failed` sends `Failed.partial`,
   if any, followed by the text `texts` gives for `Failed.reason`. `Failed.detail`
   is logged, never sent: it can hold local paths. Then the reaction becomes
-  `done` or `failed`.
+  `done` or `failed`; when `done` is `None`, a sent `Done` answer clears the
+  reaction instead.
 - **REQ-PRESENT-6** — **A turn never ends in silence.** Sending tries, in
   order: a rich message, plain text, plain text outside the forum topic. Each
   failure is logged and the next is tried. Flood control is the exception: it
@@ -507,7 +508,8 @@ heartbeat_s=8.0, model=None)` shows one turn started by `message`.
   `show` raises nothing for a Telegram error; it does propagate cancellation.
 - **REQ-PRESENT-8** — `Reactions` and `Texts` are frozen dataclasses with
   English defaults. A bot replaces any of them. The default reactions are all
-  in the Bot API's list of reactions a bot may set.
+  in the Bot API's list of reactions a bot may set. `Reactions.done` may be
+  `None`, for a bot whose answer is signal enough that the turn is over.
 
 ### CHAIN
 

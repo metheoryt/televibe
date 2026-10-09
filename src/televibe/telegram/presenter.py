@@ -36,11 +36,14 @@ _FLOOD_RETRIES = 3
 
 @dataclass(frozen=True, slots=True)
 class Reactions:
-    """The reaction on the bot's trigger message at each moment of a turn. All are on the Bot API's list."""
+    """The reaction on the bot's trigger message at each moment of a turn. All are on the Bot API's list.
+
+    `done` may be None: the answer then clears the reaction instead, for a bot whose reply is
+    signal enough that the turn is over."""
 
     queued: str = "👀"
     working: str = "👨‍💻"
-    done: str = "👌"
+    done: str | None = "👌"
     failed: str = "🤷"
 
 
@@ -173,9 +176,11 @@ class Presenter:
         log.error("televibe: every way of sending the answer failed in chat %s", self._chat_id)
         return None
 
-    async def _react(self, emoji: str) -> None:
-        await self._quietly(f"reaction {emoji}", lambda: self._bot.set_message_reaction(
-            chat_id=self._chat_id, message_id=self._message.message_id, reaction=[ReactionTypeEmoji(emoji=emoji)]))
+    async def _react(self, emoji: str | None) -> None:
+        """Set `emoji` as the reaction, or clear the reaction when it is None."""
+        reaction = [ReactionTypeEmoji(emoji=emoji)] if emoji is not None else []
+        await self._quietly(f"reaction {emoji or '(clear)'}", lambda: self._bot.set_message_reaction(
+            chat_id=self._chat_id, message_id=self._message.message_id, reaction=reaction))
 
     async def _quietly(self, what: str, call: Callable[[], Awaitable[object]]) -> None:
         """A failed reaction, draft or typing action is logged and ignored (REQ-PRESENT-7).

@@ -118,6 +118,29 @@ async def test_bot_replaces_reactions_and_texts():
     assert bot.sends()[0][1]["rich_message"].markdown == "Слишком долго."
 
 
+async def test_done_none_clears_the_reaction_after_the_answer():
+    """REQ-PRESENT-5, REQ-PRESENT-8: with done=None the answer clears the reaction instead of setting one."""
+    bot = FakeBot()
+    presenter = Presenter(bot, message(), reactions=Reactions(done=None))
+    await presenter.accepted()
+    sent = await presenter.show(script(Started(SESSION), DONE))
+    assert sent is not None
+    assert bot.reactions() == ["👀", "👨‍💻", None]
+    assert bot.calls[-1] == ("set_message_reaction", {"chat_id": -1001, "message_id": 10, "reaction": []})
+    assert bot.names()[-2] == "send_rich_message"  # cleared only after the answer is out
+
+
+async def test_done_none_still_marks_failure():
+    """REQ-PRESENT-5, REQ-PRESENT-6, REQ-PRESENT-8: done=None changes only the answered Done; failures still get 🤷."""
+    bot = FakeBot()
+    await Presenter(bot, message(), reactions=Reactions(done=None)).show(script(Failed(FailReason.TIMEOUT, None, "", "")))
+    assert bot.reactions() == ["🤷"]
+
+    bot = FakeBot(fail={"send_rich_message": 99, "send_message": 99})
+    sent = await Presenter(bot, message(), reactions=Reactions(done=None)).show(script(Started(SESSION), DONE))
+    assert sent is None and bot.reactions() == ["👨‍💻", "🤷"]
+
+
 PULSES = ("send_rich_message_draft", "send_chat_action")
 
 

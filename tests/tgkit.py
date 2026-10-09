@@ -63,8 +63,10 @@ class FakeBot:
     def names(self) -> list[str]:
         return [name for name, _ in self.calls]
 
-    def reactions(self) -> list[str]:
-        return [kw["reaction"][0].emoji for name, kw in self.calls if name == "set_message_reaction"]
+    def reactions(self) -> list[str | None]:
+        """Each reaction set, in order; None where the reaction was cleared."""
+        return [kw["reaction"][0].emoji if kw["reaction"] else None
+                for name, kw in self.calls if name == "set_message_reaction"]
 
     def sends(self) -> list[tuple[str, dict]]:
         return [(name, kw) for name, kw in self.calls if name in ("send_rich_message", "send_message")]
