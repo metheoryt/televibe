@@ -11,6 +11,7 @@ The fake agents in `tests/fakes/` replay them (REQ-TEST-2).
 | `claude/resume.jsonl` | Claude Code 2.1.294 | `--resume` from another directory, success. |
 | `claude/lost.jsonl` | Claude Code 2.1.294 | `--resume` of an unknown id: `result` with `is_error: true`. |
 | `claude/lost.stderr` | Claude Code 2.1.294 | stderr of the same run. |
+| `claude/limit.jsonl` | Claude Code 2.1.294 | New session refused at the five-hour usage limit: a `rejected` `rate_limit_event`, the CLI's own limit line, `result` with `is_error: true` and `api_error: "usage_limit_reached"`. Exit code 1, empty stderr. The init's `cwd` and memory path and the `request_id` were blanked by hand. |
 | `codex/ok.jsonl` | codex-cli 0.161.0 | New session: a hook warning, two messages around a command. |
 | `codex/resume.jsonl` | codex-cli 0.161.0 | `exec resume` of the same thread. |
 | `codex/readonly.jsonl` | codex-cli 0.161.0 | `--sandbox read-only`, asked to write a file: refused in the answer. |

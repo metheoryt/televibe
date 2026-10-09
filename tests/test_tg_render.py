@@ -58,6 +58,13 @@ def test_status_line_always_has_the_elapsed_time():
     assert status_line(model="sonnet", elapsed_s=65, tool="Bash") == "sonnet · 1:05 · Bash"
 
 
+def test_status_line_shows_usage_windows():
+    """REQ-RENDER-3: each usage window as label and percent, between the clock and the tool; past 100% stays as is."""
+    usage = [("5h", 0.354), ("7d", 0.13)]
+    assert status_line(model="sonnet", elapsed_s=65, usage=usage, tool="Bash") == "sonnet · 1:05 · 5h 35% · 7d 13% · Bash"
+    assert status_line(usage=[("<5ч>", 1.04)]) == "0:00 · (5ч) 104%"
+
+
 def test_status_line_replaces_angle_brackets():
     """REQ-RENDER-3: angle brackets from a tool or model name cannot break the thinking block."""
     line = status_line(model="<m>", tool="mcp__x</tg-thinking><b>")

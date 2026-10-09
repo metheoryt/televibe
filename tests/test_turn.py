@@ -8,7 +8,7 @@ from conftest import Kit, collect, run
 from televibe.access import Access
 from televibe.engine import Engine
 from televibe.errors import TelevibeError
-from televibe.events import Done, Failed, FailReason, Message, Queued, Started, ToolUse
+from televibe.events import Done, Failed, FailReason, Limits, Message, Queued, Started, ToolUse
 
 
 async def test_successful_turn(engine, kit: Kit):
@@ -123,6 +123,16 @@ async def test_session_lost(engine, kit: Kit):
     session = kit.provider.resume_session(kit.cwd, "11111111-2222-3333-4444-555555555555")
     events = await run(engine, kit, session=session, env=kit.env("lost.jsonl", stderr=kit.fixture("lost.stderr"), exit=1))
     assert isinstance(events[-1], Failed) and events[-1].reason is FailReason.SESSION_LOST
+
+
+async def test_usage_limit(engine, kit: Kit):
+    """REQ-CLAUDE-3, REQ-TURN-10: the recorded refusal at the usage limit is usage_limit, after a rejected
+    Limits, with no partial: the CLI's limit line is not the agent's text."""
+    if kit.provider.kind != "claude":
+        pytest.skip("only Claude Code reports usage limits")
+    events = await run(engine, kit, env=kit.env("limit.jsonl", exit=1))
+    assert [type(e) for e in events] == [Started, Limits, Failed]
+    assert events[1].rejected and events[-1].reason is FailReason.USAGE_LIMIT and events[-1].partial == ""
 
 
 async def test_error_result_without_lost_stderr(engine, kit: Kit):

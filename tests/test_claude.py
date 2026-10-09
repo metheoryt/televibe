@@ -7,7 +7,7 @@ from replay import FIXTURES, read_fixture, replay
 from televibe.access import Access
 from televibe.account import Account
 from televibe.errors import TelevibeError
-from televibe.events import Done, FailReason, Message, Started, ToolUse
+from televibe.events import Done, FailReason, LimitWindow, Limits, Message, Started, ToolUse
 from televibe.providers.base import Failure, TurnOptions
 from televibe.providers.claude import ClaudeCode
 
@@ -77,8 +77,39 @@ def test_parse_ok(claude, tmp_path):
 def test_parse_resume_ignores_thinking_only_events(claude, tmp_path):
     """REQ-CLAUDE-2: an assistant event with only a thinking block yields nothing."""
     events, outcome = replay(claude, claude.resume_session(tmp_path, "{{SESSION_ID}}"), "resume.jsonl")
-    assert [type(e) for e in events] == [Started, Message]
+    assert [type(e) for e in events] == [Started, Message, Limits]
     assert isinstance(outcome, Done)
+
+
+def test_rate_limit_event_is_limits(claude, tmp_path):
+    """REQ-CLAUDE-2, REQ-TURN-10: an allowed call reports its usage windows too."""
+    events, _ = replay(claude, claude.prepare(claude.new_session(tmp_path)), "ok.jsonl")
+    assert [e for e in events if isinstance(e, Limits)] == [
+        Limits(LimitWindow(0.35, 1791464400), LimitWindow(0.13, 1791986400), rejected=False, resets_at=1791464400),
+    ]
+
+
+def test_limits_without_unified_windows(claude, tmp_path):
+    """REQ-TURN-10: unifiedWindows is internal to the CLI; the top-level fields still give one window."""
+    parser = claude.parser(claude.resume_session(tmp_path, "S"))
+    info = {"status": "allowed_warning", "resetsAt": 100, "rateLimitType": "seven_day", "utilization": 0.91}
+    assert parser.feed({"type": "rate_limit_event", "rate_limit_info": info}) == [
+        Limits(None, LimitWindow(0.91, 100), rejected=False, resets_at=100),
+    ]
+    assert parser.feed({"type": "rate_limit_event", "rate_limit_info": {"status": "allowed"}}) == [
+        Limits(None, None, rejected=False, resets_at=None),
+    ]
+    assert parser.feed({"type": "rate_limit_event"}) == []
+
+
+def test_usage_limit_from_recorded_output(claude, tmp_path):
+    """REQ-CLAUDE-3, REQ-TURN-7: a call refused at the usage limit is usage_limit, and the CLI's own
+    limit line is not a Message, so it never reaches Failed.partial."""
+    events, outcome = replay(claude, claude.prepare(claude.new_session(tmp_path)), "limit.jsonl", returncode=1)
+    assert [type(e) for e in events] == [Started, Limits]
+    assert events[1] == Limits(LimitWindow(1.0, 1791540600), LimitWindow(0.39, 1791986400), rejected=True,
+                               resets_at=1791540600)
+    assert outcome.reason is FailReason.USAGE_LIMIT and "session limit" in outcome.detail
 
 
 def test_error_result_is_failure(claude, tmp_path):

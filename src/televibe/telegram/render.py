@@ -6,6 +6,8 @@ write it, so rendering is a length limit plus fallbacks.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from aiogram.types import InputRichMessage
 
 MAX_RICH_CHARS = 32_768
@@ -46,10 +48,19 @@ def to_draft_message(text: str, status: str | None = None) -> InputRichMessage:
     return InputRichMessage(markdown=_clamp("\n\n".join(parts), MAX_RICH_CHARS) if parts else _EMPTY_RICH)
 
 
-def status_line(*, model: str | None = None, elapsed_s: float = 0.0, tool: str | None = None) -> str:
-    """The draft's status: model, elapsed time, current tool. Never empty, so the clock shows the bot is alive."""
+def status_line(
+    *,
+    model: str | None = None,
+    elapsed_s: float = 0.0,
+    usage: Sequence[tuple[str, float]] = (),
+    tool: str | None = None,
+) -> str:
+    """The draft's status: model, elapsed time, usage, current tool. Never empty, so the clock shows the bot is alive.
+
+    `usage` is (label, fraction used) per limit window; a fraction past 1 shows as more than 100%."""
     parts = [_sanitize(model)] if model else []
     parts.append(_elapsed(elapsed_s))
+    parts += [f"{_sanitize(label)} {round(used * 100)}%" for label, used in usage]
     if tool:
         parts.append(_sanitize(tool))
     return " · ".join(parts)

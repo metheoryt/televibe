@@ -7,12 +7,22 @@ import uuid
 from typing import Any
 
 from televibe.access import Access
-from televibe.events import Done, Event, FailReason, Message, Started, ToolUse
+from televibe.events import (
+    Done,
+    Event,
+    FailReason,
+    Limits,
+    LimitWindow,
+    Message,
+    Started,
+    ToolUse,
+)
 from televibe.providers.base import Failure, Parser, Provider, TurnOptions
 from televibe.session import Session, reported
 
 _MODES = {Access.READ_ONLY: "plan", Access.FULL: "bypassPermissions"}
 _LOST = "No conversation found with session ID"
+_USAGE_LIMIT = "usage_limit_reached"
 _DETAIL_KEYS = ("command", "file_path", "path", "pattern", "url", "query", "description")
 
 
@@ -25,9 +35,44 @@ def _tool_detail(tool_input: Any) -> str:
     return ""
 
 
+def _window(raw: Any) -> LimitWindow | None:
+    if not isinstance(raw, dict):
+        return None
+    utilization, resets_at = raw.get("utilization"), raw.get("resetsAt")
+    if not isinstance(utilization, (int, float)) or not isinstance(resets_at, int):
+        return None
+    return LimitWindow(float(utilization), resets_at)
+
+
+def _limits(info: dict[str, Any]) -> Limits:
+    """`unifiedWindows` is marked internal in the CLI's schema; without it, the top-level
+    fields still give the window named by `rateLimitType` (section 13)."""
+    windows = info.get("unifiedWindows")
+    windows = dict(windows) if isinstance(windows, dict) else {}
+    kind = info.get("rateLimitType")
+    if kind in ("five_hour", "seven_day") and kind not in windows:
+        windows[kind] = info
+    resets_at = info.get("resetsAt")
+    return Limits(
+        _window(windows.get("five_hour")),
+        _window(windows.get("seven_day")),
+        info.get("status") == "rejected",
+        resets_at if isinstance(resets_at, int) else None,
+    )
+
+
 class _ClaudeParser(Parser):
+    def __init__(self, session: Session) -> None:
+        super().__init__(session)
+        self._limit_hit = False
+
     def feed(self, record: dict[str, Any]) -> list[Event]:
         kind = record.get("type")
+        if kind == "rate_limit_event":
+            info = record.get("rate_limit_info")
+            if not isinstance(info, dict):
+                return []
+            return [_limits(info)]
         if kind == "system" and record.get("subtype") == "init":
             session_id = record.get("session_id")
             if isinstance(session_id, str) and session_id:
@@ -35,6 +80,10 @@ class _ClaudeParser(Parser):
                 return [Started(self.session)]
             return []
         if kind == "assistant":
+            if record.get("api_error") == _USAGE_LIMIT:
+                # The CLI's own "You've hit your session limit" line: the failure text says it instead.
+                self._limit_hit = True
+                return []
             message = record.get("message")
             content = message.get("content") if isinstance(message, dict) else None
             texts: list[str] = []
@@ -51,8 +100,9 @@ class _ClaudeParser(Parser):
             if record.get("is_error"):
                 errors = record.get("errors")
                 detail = "; ".join(str(e) for e in errors) if isinstance(errors, list) and errors else ""
+                limit = self._limit_hit or record.get("api_error") == _USAGE_LIMIT
                 self.terminal = Failure(
-                    FailReason.PROVIDER_ERROR,
+                    FailReason.USAGE_LIMIT if limit else FailReason.PROVIDER_ERROR,
                     detail or str(record.get("result") or record.get("subtype") or "the agent reported an error"),
                 )
             else:

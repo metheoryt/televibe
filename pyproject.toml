@@ -1,6 +1,6 @@
 [project]
 name = "televibe"
-version = "0.1.1"
+version = "0.2.0"
 description = "Run headless coding agents (Claude Code, Codex) one turn at a time, as resumable sessions with a typed event stream."
 readme = "README.md"
 requires-python = ">=3.12"

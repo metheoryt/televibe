@@ -67,7 +67,8 @@ async with Engine(state_dir=Path("~/.local/state/mybot"), max_concurrent=1) as e
 
 - **REQ-API-1** — The public surface is exactly: `Engine`, `Turn`, `Session`,
   `Account`, `Access`, `ClaudeCode`, `Codex`, `FailReason`, `Stranded`, the
-  event classes of section 5, and `TelevibeError` with its subclasses. A test
+  event classes of section 5 with `LimitWindow`, and `TelevibeError` with its
+  subclasses. A test
   pins `televibe.__all__`.
 - **REQ-API-2** — Every misuse that can be caught before a process starts
   raises `TelevibeError` (or a subclass) at the call. Examples: an access level
@@ -179,11 +180,12 @@ Events, in the order they can appear:
 | `Message` | `text` | One complete assistant message. |
 | `ToolUse` | `name`, `detail` | The agent started a tool (a command, an edit, a search). |
 | `Warning` | `text` | The agent reported a problem that did not end the turn. |
+| `Limits` | `five_hour`, `seven_day`, `rejected`, `resets_at` | The account's subscription usage, as the agent reported it. Claude Code only. |
 | `Done` | `session`, `text`, `usage` | Terminal: the turn finished. `text` is the final answer. |
 | `Failed` | `reason`, `session`, `detail`, `partial` | Terminal: the turn did not finish. |
 
 `FailReason` is one of `timeout`, `cancelled`, `session_lost`,
-`provider_error`, `spawn_error`.
+`provider_error`, `spawn_error`, `usage_limit`.
 
 ### TURN
 
@@ -213,6 +215,12 @@ Events, in the order they can appear:
   field for Claude Code, and the last `agent_message` for Codex.
 - **REQ-TURN-9** — `Done.usage` is the agent's token counts, passed through
   as a plain mapping. Its keys depend on the provider.
+- **REQ-TURN-10** — `Limits` can come at any point before the terminal event,
+  more than once, or not at all: the agent reports usage when it changes. Each
+  window is a `LimitWindow` with `utilization`, the fraction used (it can pass
+  1), and `resets_at`, unix seconds; a window the agent did not report is
+  `None`. `rejected` means the agent refused the call at a limit, and
+  `resets_at` on `Limits` is when that limit resets.
 
 ---
 
@@ -339,7 +347,14 @@ same credentials. It is a strong default, but it is not containment.
   - `system` with subtype `init` maps to `Started`;
   - `text` blocks of one `assistant` event map to one `Message`;
   - each `tool_use` block maps to a `ToolUse`;
+  - `rate_limit_event` maps to `Limits`, from `unifiedWindows` or, without
+    it, from the top-level fields of the window `rateLimitType` names;
   - `result` maps to `Done`, or to `Failed` when `is_error` (REQ-TURN-7).
+- **REQ-CLAUDE-3** — A call refused at the usage limit fails with
+  `usage_limit`: an `is_error` result where the result or an assistant event
+  carries `api_error: "usage_limit_reached"`. The assistant event that carries
+  it is the CLI's own limit line, not the agent's text: it maps to no
+  `Message` and stays out of `Failed.partial`.
 
 ### CODEX
 
@@ -462,13 +477,15 @@ itself, so rendering is a length limit plus fallbacks.
   rejected.
 - **REQ-RENDER-3** — `to_draft_message(text, status)` puts `status` in a
   thinking block above the text. `status_line(...)` is never empty: it holds at
-  least the elapsed time. Angle brackets from a tool name are replaced, so a
-  name cannot break the thinking block.
+  least the elapsed time. After the time come the usage windows it is given,
+  each as a label and a whole percent, then the current tool. Angle brackets
+  from a model, label or tool name are replaced, so a name cannot break the
+  thinking block.
 
 ### PRESENT
 
 `Presenter(bot, message, *, reactions=Reactions(), texts=Texts(),
-heartbeat_s=8.0, model=None)` shows one turn started by `message`.
+heartbeat_s=8.0, model=None, tz=UTC)` shows one turn started by `message`.
 
 | Moment | Reaction on `message` | Also |
 |---|---|---|
@@ -485,7 +502,7 @@ heartbeat_s=8.0, model=None)` shows one turn started by `message`.
   answer as an aiogram `Message`, or `None` if every way of sending failed.
 - **REQ-PRESENT-3** — On `Started` the reaction becomes `working`. In a private
   chat a draft starts: the latest message text with a status line (elapsed
-  time, current tool), re-sent every `heartbeat_s` seconds whether or not
+  time, the windows of the latest `Limits`, current tool), re-sent every `heartbeat_s` seconds whether or not
   anything changed. In any other chat a typing action is sent every 4 seconds
   instead. Both stop before the answer is sent.
 - **REQ-PRESENT-4** — The answer is a reply to `message`, in its forum topic
@@ -493,7 +510,10 @@ heartbeat_s=8.0, model=None)` shows one turn started by `message`.
   `message` does not lose the answer.
 - **REQ-PRESENT-5** — `Done` sends `Done.text`. `Failed` sends `Failed.partial`,
   if any, followed by the text `texts` gives for `Failed.reason`. `Failed.detail`
-  is logged, never sent: it can hold local paths. Then the reaction becomes
+  is logged, never sent: it can hold local paths. The `usage_limit` text is
+  formatted with `resets_at`, the latest `Limits.resets_at` as an aware
+  datetime in `tz`; with none known the chat reads `provider_error`, and a text
+  that does not format is sent as it is. Then the reaction becomes
   `done` or `failed`; when `done` is `None`, a sent `Done` answer clears the
   reaction instead.
 - **REQ-PRESENT-6** — **A turn never ends in silence.** Sending tries, in
@@ -510,6 +530,9 @@ heartbeat_s=8.0, model=None)` shows one turn started by `message`.
   English defaults. A bot replaces any of them. The default reactions are all
   in the Bot API's list of reactions a bot may set. `Reactions.done` may be
   `None`, for a bot whose answer is signal enough that the turn is over.
+  `Texts` also holds the status line's labels for the usage windows,
+  `five_hour` and `seven_day`. `Texts.for_reason(reason, resets_at=None)` gives a reason's
+  text, filling in the `usage_limit` template as REQ-PRESENT-5 says.
 
 ### CHAIN
 
@@ -589,8 +612,12 @@ measurement before it becomes a requirement.
   token; the documented way to pass it is the `CLAUDE_CODE_OAUTH_TOKEN`
   variable, which `Account.credentials` carries. This has not been tried on
   the deploy host yet.
-- **Separate failure reasons for an exhausted limit or an expired login.**
-  They are added once each is recorded. Until then, both are `provider_error`.
+- **A separate failure reason for an expired login.** It is added once it is
+  recorded. Until then it is `provider_error`. The usage limit was recorded
+  with Claude Code 2.1.294 and is `usage_limit` (REQ-CLAUDE-3).
+- **Whether `unifiedWindows` stays in `rate_limit_event`.** The CLI's schema
+  marks it internal. Without it, `Limits` has only the window `rateLimitType`
+  names (REQ-CLAUDE-2).
 - **Whether `SIGTERM` before `SIGKILL` keeps the partial turn in the
   transcript.** `SIGKILL` is the one measured to work.
 - **Reactions in the target groups.** The default reactions are on the Bot
@@ -605,7 +632,7 @@ measurement before it becomes a requirement.
   These are the next specification.
 - Text streamed word by word. Claude Code can do it
   (`--include-partial-messages`); Codex `exec --json` cannot. v1 events are
-  the part both share.
+  the part both share, apart from `Limits`, which only Claude Code reports.
 - Chats other than Telegram. A Slack or Discord layer would sit beside
   `televibe.telegram` under the same rule (REQ-SCOPE-1).
 - In the Telegram layer: a stop button on the draft, forking a chain

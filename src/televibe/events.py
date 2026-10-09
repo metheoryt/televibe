@@ -16,6 +16,7 @@ class FailReason(enum.StrEnum):
     SESSION_LOST = "session_lost"
     PROVIDER_ERROR = "provider_error"
     SPAWN_ERROR = "spawn_error"
+    USAGE_LIMIT = "usage_limit"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,27 @@ class Warning:  # noqa: A001 - the spec's name; it shadows the builtin only insi
 
 
 @dataclass(frozen=True, slots=True)
+class LimitWindow:
+    """One subscription usage window: the fraction used (may pass 1) and when it resets, in unix seconds."""
+
+    utilization: float
+    resets_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class Limits:
+    """The account's subscription usage, as the agent reported it. Claude Code only.
+
+    `rejected` means the agent refused the call at a limit; `resets_at` is when the limit that
+    applies resets. A window the agent did not report is None."""
+
+    five_hour: LimitWindow | None
+    seven_day: LimitWindow | None
+    rejected: bool
+    resets_at: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class Done:
     """Terminal: the turn finished. `text` is the final answer."""
 
@@ -71,6 +93,6 @@ class Failed:
     partial: str
 
 
-type Event = Queued | Started | Message | ToolUse | Warning | Done | Failed
+type Event = Queued | Started | Message | ToolUse | Warning | Limits | Done | Failed
 
 TERMINAL = (Done, Failed)

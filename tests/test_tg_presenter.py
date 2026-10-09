@@ -1,10 +1,20 @@
 import asyncio
 import dataclasses
+from datetime import timedelta, timezone
 
 import pytest
 from tgkit import BOT_API_REACTIONS, SESSION, FakeBot, message, script
 
-from televibe.events import Done, Failed, FailReason, Message, Started, ToolUse
+from televibe.events import (
+    Done,
+    Failed,
+    FailReason,
+    Limits,
+    LimitWindow,
+    Message,
+    Started,
+    ToolUse,
+)
 from televibe.telegram import presenter as presenter_module
 from televibe.telegram.presenter import Presenter, Reactions, Texts
 
@@ -103,6 +113,7 @@ def test_reactions_and_texts_defaults():
     reactions, texts = Reactions(), Texts()
     assert {reactions.queued, reactions.working, reactions.done, reactions.failed} <= BOT_API_REACTIONS
     assert all(texts.for_reason(reason).isascii() and texts.for_reason(reason) for reason in FailReason)
+    assert "{" not in texts.for_reason(FailReason.USAGE_LIMIT)  # no reset time known: no raw placeholder
     with pytest.raises(dataclasses.FrozenInstanceError):
         reactions.done = "🔥"  # type: ignore[misc]
     with pytest.raises(dataclasses.FrozenInstanceError):
@@ -139,6 +150,47 @@ async def test_done_none_still_marks_failure():
     bot = FakeBot(fail={"send_rich_message": 99, "send_message": 99})
     sent = await Presenter(bot, message(), reactions=Reactions(done=None)).show(script(Started(SESSION), DONE))
     assert sent is None and bot.reactions() == ["👨‍💻", "🤷"]
+
+
+REJECTED = Limits(LimitWindow(1.0, 1791540600), LimitWindow(0.39, 1791986400), rejected=True, resets_at=1791540600)
+LIMIT_FAILED = Failed(FailReason.USAGE_LIMIT, SESSION, "You've hit your session limit", "")
+
+
+async def test_usage_limit_says_when_it_resets():
+    """REQ-PRESENT-5, REQ-PRESENT-8: usage_limit reads the reset time of the last Limits, in the presenter's tz."""
+    bot = FakeBot()
+    await Presenter(bot, message()).show(script(Started(SESSION), REJECTED, LIMIT_FAILED))
+    assert bot.sends()[0][1]["rich_message"].markdown == "The usage limit is reached. It resets at 10:10 UTC."
+    assert bot.reactions()[-1] == "🤷"
+
+    bot = FakeBot()
+    texts = Texts(usage_limit="Лимит исчерпан, сброс в {resets_at:%H:%M}.")
+    almaty = timezone(timedelta(hours=5))
+    await Presenter(bot, message(), texts=texts, tz=almaty).show(script(Started(SESSION), REJECTED, LIMIT_FAILED))
+    assert bot.sends()[0][1]["rich_message"].markdown == "Лимит исчерпан, сброс в 15:10."
+
+
+async def test_usage_limit_text_never_shows_a_raw_placeholder():
+    """REQ-PRESENT-5: with no reset time known the chat reads provider_error; a text that does not format is sent as is."""
+    bot = FakeBot()
+    await Presenter(bot, message()).show(script(Started(SESSION), LIMIT_FAILED))
+    assert bot.sends()[0][1]["rich_message"].markdown == Texts().provider_error
+
+    bot = FakeBot()
+    texts = Texts(usage_limit="Лимит {когда}")
+    await Presenter(bot, message(), texts=texts).show(script(Started(SESSION), REJECTED, LIMIT_FAILED))
+    assert bot.sends()[0][1]["rich_message"].markdown == "Лимит {когда}"
+
+
+async def test_draft_shows_usage_with_the_bots_labels():
+    """REQ-PRESENT-3, REQ-PRESENT-8: the draft's status holds the latest usage windows, labelled by Texts."""
+    bot = FakeBot()
+    allowed = Limits(LimitWindow(0.42, 1), None, rejected=False, resets_at=1)
+    events = script(Started(SESSION), REJECTED, allowed, Message("partial"), 0.2, DONE)
+    texts = Texts(five_hour="5ч", seven_day="7д")
+    await Presenter(bot, message("private", chat_id=7), heartbeat_s=0.05, texts=texts).show(events)
+    last = [kw for name, kw in bot.calls if name == "send_rich_message_draft"][-1]["rich_message"].markdown
+    assert last.startswith("<tg-thinking>0:00 · 5ч 42%</tg-thinking>")
 
 
 PULSES = ("send_rich_message_draft", "send_chat_action")

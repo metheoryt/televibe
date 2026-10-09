@@ -7,13 +7,14 @@ import logging
 import time
 from collections.abc import AsyncIterable, Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, tzinfo
 
 from aiogram import Bot
 from aiogram.enums import ChatAction
 from aiogram.exceptions import TelegramRetryAfter
 from aiogram.types import Message, ReactionTypeEmoji, ReplyParameters
 
-from televibe.events import Done, Event, Failed, FailReason, Started, ToolUse
+from televibe.events import Done, Event, Failed, FailReason, Limits, Started, ToolUse
 from televibe.events import Message as AgentMessage
 from televibe.telegram.render import (
     status_line,
@@ -49,16 +50,32 @@ class Reactions:
 
 @dataclass(frozen=True, slots=True)
 class Texts:
-    """What the chat reads when a turn fails, per FailReason."""
+    """What the chat reads: a text per FailReason, and the labels of the usage windows in the draft's status.
+
+    `usage_limit` is a `str.format` template over `resets_at`, an aware datetime, so a bot picks its
+    own time format; `for_reason` fills it in."""
 
     timeout: str = "The agent ran out of time."
     cancelled: str = "The turn was cancelled."
     session_lost: str = "The agent lost this conversation. Send a new message, not a reply, to start over."
     provider_error: str = "The agent failed."
     spawn_error: str = "The agent could not be started."
+    usage_limit: str = "The usage limit is reached. It resets at {resets_at:%H:%M %Z}."
+    five_hour: str = "5h"
+    seven_day: str = "7d"
 
-    def for_reason(self, reason: FailReason) -> str:
-        return getattr(self, reason.value)
+    def for_reason(self, reason: FailReason, resets_at: datetime | None = None) -> str:
+        """The text for `reason`. For usage_limit with no `resets_at` it is `provider_error`, and a
+        template that does not format is returned as it is: a raw placeholder never reaches the chat."""
+        if reason is not FailReason.USAGE_LIMIT:
+            return getattr(self, reason.value)
+        if resets_at is None:
+            return self.provider_error
+        try:
+            return self.usage_limit.format(resets_at=resets_at)
+        except (AttributeError, KeyError, IndexError, ValueError):
+            log.warning("televibe: Texts.usage_limit does not format: %r", self.usage_limit)
+            return self.usage_limit
 
 
 _REACTIONS = Reactions()
@@ -77,15 +94,17 @@ class Presenter:
         texts: Texts = _TEXTS,
         heartbeat_s: float = 8.0,
         model: str | None = None,
+        tz: tzinfo = UTC,
     ) -> None:
         self._bot, self._message = bot, message
         self._chat_id = message.chat.id
         self._thread_id = message.message_thread_id if message.is_topic_message else None
         self._private = message.chat.type == "private"
         self._reactions, self._texts = reactions, texts
-        self._heartbeat_s, self._model = heartbeat_s, model
+        self._heartbeat_s, self._model, self._tz = heartbeat_s, model, tz
         self._text = ""
         self._tool: str | None = None
+        self._limits: Limits | None = None
         self._started_at = 0.0
 
     async def accepted(self) -> None:
@@ -106,6 +125,8 @@ class Presenter:
                     self._text, self._tool = event.text, None
                 elif isinstance(event, ToolUse):
                     self._tool = event.name
+                elif isinstance(event, Limits):
+                    self._limits = event
                 elif isinstance(event, (Done, Failed)):
                     await _stop(pulse)  # before the answer, so no draft or typing outlives it
                     return await self._finish(event)
@@ -128,14 +149,27 @@ class Presenter:
             await asyncio.sleep(TYPING_EVERY_S)
 
     def _status(self) -> str:
-        return status_line(model=self._model, elapsed_s=time.monotonic() - self._started_at, tool=self._tool)
+        return status_line(model=self._model, elapsed_s=time.monotonic() - self._started_at,
+                           usage=self._usage(), tool=self._tool)
+
+    def _usage(self) -> list[tuple[str, float]]:
+        if self._limits is None:
+            return []
+        windows = ((self._texts.five_hour, self._limits.five_hour), (self._texts.seven_day, self._limits.seven_day))
+        return [(label, window.utilization) for label, window in windows if window is not None]
+
+    def _reason_text(self, reason: FailReason) -> str:
+        """The reason's text, the usage limit's with the latest reset time in `tz`."""
+        unix = self._limits.resets_at if self._limits is not None else None
+        resets_at = datetime.fromtimestamp(unix, self._tz) if unix is not None else None
+        return self._texts.for_reason(reason, resets_at)
 
     async def _finish(self, end: Done | Failed) -> Message | None:
         if isinstance(end, Done):
             text, reaction = end.text, self._reactions.done
         else:
             log.warning("televibe: turn failed in chat %s (%s): %s", self._chat_id, end.reason, end.detail)
-            reason = self._texts.for_reason(end.reason)
+            reason = self._reason_text(end.reason)
             text = f"{end.partial}\n\n{reason}" if end.partial.strip() else reason
             reaction = self._reactions.failed
         sent = await self._send(text)
