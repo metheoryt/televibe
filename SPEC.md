@@ -615,6 +615,13 @@ class ChainStore(Protocol):
 These are open questions, not requirements. Each one is settled by a
 measurement before it becomes a requirement.
 
+- **Claude Code subagent records in the answer.** A subagent's messages and
+  tools (`parent_tool_use_id` set) arrive as `Message` and `ToolUse` like the
+  main agent's. When the main agent calls a quiet tool after a subagent ends
+  and then writes its final text, `Done.text` also holds the subagent's last
+  text (REQ-TURN-11). No recording has subagent records yet.
+- **Codex MCP tool calls.** No recording has one, so its item type and fields
+  are unseen; a quiet MCP tool on Codex is named by that item type.
 - **Codex `turn.failed` and other error records.** Only the success stream and
   the missing-session case have been seen. Until a recording exists, a turn
   that ends without `turn.completed` is `provider_error` (REQ-RUN-5).
