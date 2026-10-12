@@ -79,7 +79,8 @@ async with Engine(state_dir=Path("~/.local/state/mybot"), max_concurrent=1) as e
   (Session), `access` (Access, default `READ_ONLY`), `lane` (str or None),
   `model` (str or None), `instructions` (str or None, appended to the agent's
   system prompt), `env` (mapping, default empty), `add_dirs` (sequence of
-  paths, default empty), `timeout_s` (positive number, default 900), `tag`
+  paths, default empty), `quiet_tools` (collection of tool names, default
+  empty; REQ-TURN-11), `timeout_s` (positive number, default 900), `tag`
   (JSON-serializable mapping, default empty).
 
 ---
@@ -181,7 +182,7 @@ Events, in the order they can appear:
 | `ToolUse` | `name`, `detail` | The agent started a tool (a command, an edit, a search). |
 | `Warning` | `text` | The agent reported a problem that did not end the turn. |
 | `Limits` | `five_hour`, `seven_day`, `rejected`, `resets_at` | The account's subscription usage, as the agent reported it. Claude Code only. |
-| `Done` | `session`, `text`, `usage` | Terminal: the turn finished. `text` is the final answer. |
+| `Done` | `session`, `text`, `usage`, `last_message` | Terminal: the turn finished. `text` is the final answer. |
 | `Failed` | `reason`, `session`, `detail`, `partial` | Terminal: the turn did not finish. |
 
 `FailReason` is one of `timeout`, `cancelled`, `session_lost`,
@@ -211,8 +212,10 @@ Events, in the order they can appear:
 - **REQ-TURN-7** — A turn whose agent reports an error result ends in
   `Failed`, never in `Done`. Claude Code's `result` event with
   `is_error: true` is such a report.
-- **REQ-TURN-8** — `Done.text` is the agent's final answer: the `result`
-  field for Claude Code, and the last `agent_message` for Codex.
+- **REQ-TURN-8** — `Done.last_message` is the agent's own final text: the
+  `result` field for Claude Code, and the last `agent_message` for Codex.
+  `Done.text` is the final answer (REQ-TURN-11); with no `quiet_tools` it is
+  the last `Message`, which is the same text.
 - **REQ-TURN-9** — `Done.usage` is the agent's token counts, passed through
   as a plain mapping. Its keys depend on the provider.
 - **REQ-TURN-10** — `Limits` can come at any point before the terminal event,
@@ -221,6 +224,18 @@ Events, in the order they can appear:
   1), and `resets_at`, unix seconds; a window the agent did not report is
   `None`. `rejected` means the agent refused the call at a limit, and
   `resets_at` on `Limits` is when that limit resets.
+- **REQ-TURN-11** — `Done.text` is the last `Message`, joined with blank
+  lines to the messages before it that only quiet tools separate from it. A
+  quiet tool is a `ToolUse` whose `name` is in the turn's `quiet_tools`. A
+  tool that is not quiet starts the answer afresh, and so does a `Message`
+  with no tool at all since the previous one: text written before a real tool
+  call, or a status line followed by its result, is narration, not the answer.
+  So an agent that answers, notes something with a quiet tool, and closes
+  with a short line sends the whole answer. With no message after the last
+  tool that is not quiet, `Done.text` is `Done.last_message`. Which tools are
+  quiet is the caller's choice. For Codex, `ToolUse.name` is the item type
+  (`command_execution`, …), so a quiet tool is named by its
+  item type, not by an MCP tool's own name.
 
 ---
 

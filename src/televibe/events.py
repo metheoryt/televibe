@@ -76,11 +76,14 @@ class Limits:
 
 @dataclass(frozen=True, slots=True)
 class Done:
-    """Terminal: the turn finished. `text` is the final answer."""
+    """Terminal: the turn finished. `text` is the final answer: the last message, joined with the
+    messages before it that only quiet tools separate from it. `last_message` is the agent's own
+    final text, as it reported it."""
 
     session: Session
     text: str
     usage: dict[str, Any]
+    last_message: str = ""
 
 
 @dataclass(frozen=True, slots=True)

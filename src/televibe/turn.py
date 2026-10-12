@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import uuid
 import weakref
@@ -13,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from televibe.env import child_env
 from televibe.errors import TelevibeError
-from televibe.events import TERMINAL, Done, Event, Failed, FailReason, Message, Queued, Started
+from televibe.events import TERMINAL, Done, Event, Failed, FailReason, Message, Queued, Started, ToolUse
 from televibe.lines import json_records
 from televibe.procinfo import kill_group, start_time
 from televibe.providers.base import Failure, Parser, Provider, TurnOptions
@@ -38,6 +39,7 @@ class TurnSpec:
     env: dict[str, str] = field(repr=False)  # REQ-ENV-4: may hold tokens
     timeout_s: float
     tag: dict[str, Any]
+    quiet_tools: frozenset[str] = frozenset()  # REQ-TURN-11: tools that do not split the answer
 
 
 class _Tail:
@@ -96,6 +98,8 @@ class Runner:
         self._task: asyncio.Task[None] | None = None
         self._started: Session | None = None
         self._messages: list[str] = []
+        self._answer: list[str] = []
+        self._joins = False  # the next message joins the answer: only quiet tools since the last one
         self._marker: dict[str, Any] = {}
         key = (provider.kind, str(session.home), session.id) if session.id else None
         self._ticket = Ticket(spec.lane, key)
@@ -142,9 +146,18 @@ class Runner:
                 log.warning("televibe: could not update the marker of turn %s: %s", self.turn_id, exc)
         elif isinstance(event, Message):
             self._messages.append(event.text)
+            self._answer = [*self._answer, event.text] if self._joins else [event.text]
+            self._joins = False
+        elif isinstance(event, ToolUse):
+            if event.name in self.spec.quiet_tools:
+                self._joins = bool(self._answer)
+            else:
+                self._answer, self._joins = [], False
         self.events.put_nowait(event)
 
     def _end(self, event: Done | Failed) -> None:
+        if isinstance(event, Done):  # REQ-TURN-8, REQ-TURN-11
+            event = dataclasses.replace(event, text="\n\n".join(self._answer) or event.text, last_message=event.text)
         self.ended = True
         self.events.put_nowait(event)
 

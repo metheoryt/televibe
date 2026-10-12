@@ -1,4 +1,5 @@
 import inspect
+import json
 import os
 from types import MappingProxyType
 
@@ -21,6 +22,52 @@ async def test_successful_turn(engine, kit: Kit):
     done = events[-1]
     assert isinstance(done, Done) and done.text == kit.expected_text() and done.usage
     assert done.session == events[0].session
+
+
+def _script(kit: Kit, steps: list[tuple[str, str]]) -> dict[str, str]:
+    """A stream for the fake agent: ("text", t) is an assistant message, ("tool", name) a tool call.
+    Claude's `result` is its last text, as the CLI reports it."""
+    if kit.kind == "claude":
+        lines = [{"type": "system", "subtype": "init", "session_id": "{{SESSION_ID}}"}]
+        for kind, value in steps:
+            block = {"type": "text", "text": value} if kind == "text" else {"type": "tool_use", "name": value, "input": {}}
+            lines.append({"type": "assistant", "message": {"content": [block]}, "parent_tool_use_id": None})
+        last = [value for kind, value in steps if kind == "text"][-1]
+        lines.append({"type": "result", "subtype": "success", "is_error": False, "result": last,
+                      "session_id": "{{SESSION_ID}}", "usage": {}})
+    else:
+        lines = [{"type": "thread.started", "thread_id": "{{SESSION_ID}}"}]
+        for kind, value in steps:
+            if kind == "text":
+                lines.append({"type": "item.completed", "item": {"type": "agent_message", "text": value}})
+            else:
+                lines.append({"type": "item.started", "item": {"type": value}})
+        lines.append({"type": "turn.completed", "usage": {}})
+    path = kit.tmp / "script.jsonl"
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+    return {**kit.env(None), "FAKE_FIXTURE": str(path)}
+
+
+@pytest.mark.parametrize(
+    ("steps", "quiet", "answer"),
+    [
+        ([("text", "review"), ("tool", "note"), ("text", "as above")], {"note"}, "review\n\nas above"),
+        ([("text", "review"), ("tool", "note"), ("text", "as above")], set(), "as above"),
+        ([("text", "looking"), ("tool", "search"), ("text", "found")], {"note"}, "found"),
+        ([("text", "a"), ("tool", "note"), ("tool", "search"), ("text", "b")], {"note"}, "b"),
+        ([("text", "a"), ("tool", "note"), ("text", "b"), ("tool", "note")], {"note"}, "a\n\nb"),
+        ([("tool", "note"), ("text", "a"), ("tool", "note"), ("tool", "note"), ("text", "b")], {"note"}, "a\n\nb"),
+        ([("text", "I will check"), ("text", "checked")], {"note"}, "checked"),
+    ],
+)
+async def test_answer_joins_across_quiet_tools(engine, kit: Kit, steps, quiet, answer):
+    """REQ-TURN-8, REQ-TURN-11: Done.text is the last message, joined with the messages before it
+    that only quiet tools separate from it; Done.last_message is the agent's own final text."""
+    events = await run(engine, kit, env=_script(kit, steps), quiet_tools=quiet)
+    done = events[-1]
+    assert isinstance(done, Done)
+    assert done.text == answer
+    assert done.last_message == [value for kind, value in steps if kind == "text"][-1]
 
 
 async def test_prompt_on_stdin_then_closed(engine, kit: Kit):
@@ -171,6 +218,9 @@ async def test_turn_is_iterated_once(engine, kit: Kit):
         ({"timeout_s": float("inf")}, "timeout_s"),
         ({"tag": {"x": object()}}, "tag"),
         ({"add_dirs": "/repo"}, "add_dirs"),
+        ({"quiet_tools": "note"}, "quiet_tools"),
+        ({"quiet_tools": ["note", 5]}, "quiet_tools"),
+        ({"quiet_tools": 5}, "quiet_tools"),
         ({"lane": 5}, "lane"),
         ({"model": 5}, "model"),
         ({"instructions": 5}, "instructions"),
@@ -206,7 +256,7 @@ async def test_defaults(engine, kit: Kit):
     params = inspect.signature(Engine.turn).parameters
     assert {name: p.default for name, p in params.items() if name not in ("self", "prompt", "session")} == {
         "access": Access.READ_ONLY, "lane": None, "model": None, "instructions": None,
-        "env": MappingProxyType({}), "add_dirs": (), "timeout_s": 900, "tag": MappingProxyType({}),
+        "env": MappingProxyType({}), "add_dirs": (), "quiet_tools": (), "timeout_s": 900, "tag": MappingProxyType({}),
     }
     await run(engine, kit, env=kit.env())
     argv = kit.record()["argv"]

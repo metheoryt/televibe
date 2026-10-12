@@ -8,7 +8,10 @@ televibe starts the agent, turns its output into common events
 `Failed`), and kills what it started on timeout, cancel, or when the caller
 walks away. Claude Code also reports the account's subscription usage as
 `Limits` (five-hour and seven-day windows), and a call refused at the limit
-fails with `FailReason.USAGE_LIMIT`. What to do with the output is the caller's
+fails with `FailReason.USAGE_LIMIT`. `Done.text` is the final answer; when
+the agent answers, calls a bookkeeping tool and closes with a short line,
+`engine.turn(..., quiet_tools={"<tool name>"})` keeps the answer whole, and
+`Done.last_message` still has the agent's own last text. What to do with the output is the caller's
 business: televibe never sends a message anywhere.
 
 The optional Telegram layer does: `pip install 'televibe[telegram]'` adds

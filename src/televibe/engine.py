@@ -9,7 +9,7 @@ import logging
 import math
 import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -111,6 +111,7 @@ class Engine:
         instructions: str | None = None,
         env: Mapping[str, str] = _EMPTY,
         add_dirs: Sequence[str | os.PathLike[str]] = (),
+        quiet_tools: Iterable[str] = (),
         timeout_s: float = 900,
         tag: Mapping[str, Any] = _EMPTY,
     ) -> Turn:
@@ -141,12 +142,18 @@ class Engine:
         if any("\0" in os.fspath(d) for d in add_dirs if isinstance(d, (str, os.PathLike))):
             raise TelevibeError("add_dirs must not contain a NUL character")
         dirs = tuple(Path(d).expanduser().resolve() for d in add_dirs)
+        if isinstance(quiet_tools, (str, bytes)):
+            raise TelevibeError("quiet_tools must be a collection of tool names, not one name")
+        names = tuple(quiet_tools) if isinstance(quiet_tools, Iterable) else (quiet_tools,)
+        if not all(isinstance(name, str) for name in names):
+            raise TelevibeError("quiet_tools must hold tool names as str")
+        quiet = frozenset(names)
         turn_env = check_turn_env(env)
         try:
             tag_copy = json.loads(json.dumps(dict(tag)))
         except (TypeError, ValueError) as exc:
             raise TelevibeError(f"tag must be a JSON-serializable mapping: {exc}") from None
-        spec = TurnSpec(prompt, TurnOptions(access, model, instructions, dirs), lane, turn_env, float(timeout_s), tag_copy)
+        spec = TurnSpec(prompt, TurnOptions(access, model, instructions, dirs), lane, turn_env, float(timeout_s), tag_copy, quiet)
         return Turn(Runner(self, provider, provider.prepare(session), spec))
 
     async def stranded(self) -> list[Stranded]:
