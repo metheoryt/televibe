@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import dataclasses
 import uuid
+from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any
 
 from televibe.access import Access
+from televibe.env import child_env
 from televibe.events import (
     Done,
     Event,
@@ -17,7 +20,7 @@ from televibe.events import (
     Started,
     ToolUse,
 )
-from televibe.oneshot import AskSpec
+from televibe.oneshot import Answer, AskSpec, check_ask_args, run_oneshot
 from televibe.providers.base import Failure, Parser, Provider, TurnOptions
 from televibe.session import Session, reported
 
@@ -66,6 +69,7 @@ class _ClaudeParser(Parser):
     def __init__(self, session: Session) -> None:
         super().__init__(session)
         self._limit_hit = False
+        self.structured_output: Any = None  # REQ-ASK-1: the one-shot answer, when the result carries one
 
     def feed(self, record: dict[str, Any]) -> list[Event]:
         kind = record.get("type")
@@ -111,6 +115,8 @@ class _ClaudeParser(Parser):
                 if isinstance(session_id, str) and session_id:
                     self.session = reported(self.session, session_id)
                 usage = record.get("usage")
+                if "structured_output" in record:
+                    self.structured_output = record["structured_output"]
                 self.terminal = Done(self.session, str(record.get("result") or ""), dict(usage) if isinstance(usage, dict) else {})
         return []
 
@@ -159,6 +165,23 @@ class ClaudeCode(Provider):
         if spec.system:
             argv += ["--system-prompt", spec.system]
         return argv
+
+    async def ask(
+        self,
+        prompt: str,
+        *,
+        schema: Mapping[str, Any],
+        system: str | None = None,
+        model: str | None = None,
+        env: Mapping[str, str] = MappingProxyType({}),
+        timeout_s: float = 180,
+    ) -> Answer:
+        """One answer in `schema`: no tools, no session, no MCP, outside the engine (section 12)."""
+        spec = check_ask_args(prompt, schema, system, model, env, timeout_s)
+        child = child_env(self.account_var, self.account, spec.env)
+        # The parser needs a Session to build Started/Done; a one-shot has none, so it gets a
+        # throw-away one that is never started and never reported. run_oneshot ignores both events.
+        return await run_oneshot(self.ask_argv(spec), spec, child, self.parser(self.new_session(".")))
 
     def parser(self, session: Session) -> Parser:
         return _ClaudeParser(session)

@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from televibe.env import check_turn_env
 from televibe.errors import TelevibeError
 from televibe.events import FailReason, Limits
+
+if TYPE_CHECKING:
+    from televibe.providers.base import Parser
 
 DEFAULT_TIMEOUT_S = 180.0
 
@@ -72,3 +77,81 @@ def check_ask_args(
     if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or not math.isfinite(timeout_s) or timeout_s <= 0:
         raise TelevibeError("timeout_s must be a positive, finite number of seconds")
     return AskSpec(prompt, schema_json, system, model, check_turn_env(env), float(timeout_s))
+
+
+async def run_oneshot(argv: list[str], spec: AskSpec, env: dict[str, str], parser: Parser) -> Answer:
+    """Run one call to its result (REQ-ASK-3, REQ-ASK-4). `env` is the full child environment."""
+    # Imported here: providers.base imports this module for Answer, and turn imports providers.base.
+    from televibe.lines import json_records
+    from televibe.procinfo import kill_group
+    from televibe.providers.base import Failure
+    from televibe.turn import (
+        DRAIN_S,
+        EXIT_GRACE_S,
+        STDERR_TAIL,
+        _feed_stdin,
+        _leader_exit,
+        _Tail,
+    )
+
+    limits: list[Limits] = []
+
+    async def read(stdout: asyncio.StreamReader) -> None:
+        async for record in json_records(stdout):
+            for event in parser.feed(record):
+                if isinstance(event, Limits):
+                    limits.append(event)
+            if parser.terminal is not None:
+                return
+
+    with tempfile.TemporaryDirectory(prefix="televibe-ask-") as cwd:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd,
+                env=env,
+                start_new_session=True,  # its own process group, killed as one (REQ-ASK-3)
+            )
+        except OSError as exc:
+            raise AskFailed(FailReason.SPAWN_ERROR, f"could not start {argv[0]!r}: {exc}") from None
+        assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
+        stderr = _Tail(STDERR_TAIL)
+        stderr_task = asyncio.create_task(stderr.drain(proc.stderr))
+        reader = asyncio.create_task(read(proc.stdout))
+        exited = asyncio.create_task(_leader_exit(proc))
+        timed_out = False
+        try:
+            async with asyncio.timeout(spec.timeout_s):
+                await _feed_stdin(proc.stdin, spec.prompt)
+                await asyncio.wait({reader, exited}, return_when=asyncio.FIRST_COMPLETED)
+                if reader.done() and reader.exception() is None:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(exited), EXIT_GRACE_S)
+                    except TimeoutError:
+                        kill_group(proc.pid)
+                else:
+                    await asyncio.wait({reader}, timeout=DRAIN_S)
+        except TimeoutError:
+            timed_out = True
+        finally:
+            kill_group(proc.pid)  # timeout, cancel, or stragglers holding the pipes (REQ-RUN-7)
+            reader.cancel()
+            await asyncio.wait({exited})
+            await asyncio.wait({stderr_task}, timeout=DRAIN_S)
+            stderr_task.cancel()
+            await asyncio.gather(reader, stderr_task, return_exceptions=True)
+        if not reader.cancelled() and (error := reader.exception()) is not None:
+            raise error
+        if timed_out:
+            raise AskFailed(FailReason.TIMEOUT, f"no result within {spec.timeout_s:g} s")
+        returncode = proc.returncode if proc.returncode is not None else -1
+        outcome = parser.finish(returncode, stderr.text())
+        if isinstance(outcome, Failure):
+            raise AskFailed(outcome.reason, outcome.detail)
+        data = getattr(parser, "structured_output", None)
+        if data is None:
+            raise AskFailed(FailReason.PROVIDER_ERROR, "the agent produced no structured output")
+        return Answer(data, outcome.usage, limits[-1] if limits else None)
