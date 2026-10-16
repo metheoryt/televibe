@@ -491,10 +491,10 @@ answer.data["text"]
   caller's own. A `result` without `structured_output` is `provider_error`
   saying the agent produced no structured output.
 - **REQ-ASK-5** — Misuse raises `TelevibeError` before any process starts
-  (REQ-API-2): an empty or non-UTF-8 prompt, a `schema` that is not a
-  JSON-serializable mapping, a `system` or `model` that is not a str, a
-  forbidden variable in `env`, a `timeout_s` that is not a positive finite
-  number.
+  (REQ-API-2): an empty prompt, a `schema` that is not a JSON-serializable
+  mapping, a `system` or `model` that is not a str, text in any of them that
+  does not encode to UTF-8 (a lone surrogate), a forbidden variable in `env`,
+  a `timeout_s` that is not a positive finite number.
 - **REQ-ASK-6** — The call writes no marker and takes no slot, lane or
   session lock: `engine.stranded()` never reports it, and it never waits
   behind a turn. A caller who needs to bound concurrent calls does it with a

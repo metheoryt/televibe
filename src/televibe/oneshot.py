@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from televibe.env import check_turn_env
 from televibe.errors import TelevibeError
-from televibe.events import FailReason, Limits
+from televibe.events import Done, FailReason, Limits
 
 if TYPE_CHECKING:
     from televibe.providers.base import Parser
@@ -48,6 +48,13 @@ class AskSpec:
     timeout_s: float = DEFAULT_TIMEOUT_S
 
 
+def _check_utf8(name: str, text: str) -> None:
+    try:
+        text.encode()
+    except UnicodeEncodeError:
+        raise TelevibeError(f"{name} must be text that encodes to UTF-8 (it holds a lone surrogate)") from None
+
+
 def check_ask_args(
     prompt: str,
     schema: Mapping[str, Any],
@@ -59,21 +66,21 @@ def check_ask_args(
     """Every misuse raises TelevibeError before a process starts (REQ-ASK-5)."""
     if not isinstance(prompt, str) or not prompt:
         raise TelevibeError("prompt must be a non-empty str")
-    try:
-        prompt.encode()
-    except UnicodeEncodeError:
-        raise TelevibeError("prompt must be text that encodes to UTF-8 (it holds a lone surrogate)") from None
+    _check_utf8("prompt", prompt)
     if not isinstance(schema, Mapping):
         raise TelevibeError("schema must be a mapping holding a JSON Schema")
     try:
         schema_json = json.dumps(dict(schema), separators=(",", ":"), ensure_ascii=False)
     except (TypeError, ValueError) as exc:
         raise TelevibeError(f"schema must be JSON-serializable: {exc}") from None
+    _check_utf8("schema", schema_json)  # ensure_ascii=False keeps a lone surrogate, and argv cannot carry one
     for name, value in (("system", system), ("model", model)):
         if value is not None and not isinstance(value, str):
             raise TelevibeError(f"{name} must be a str or None")
         if value is not None and "\0" in value:
             raise TelevibeError(f"{name} must not contain a NUL character")
+        if value is not None:
+            _check_utf8(name, value)
     if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)) or not math.isfinite(timeout_s) or timeout_s <= 0:
         raise TelevibeError("timeout_s must be a positive, finite number of seconds")
     return AskSpec(prompt, schema_json, system, model, check_turn_env(env), float(timeout_s))
@@ -145,13 +152,15 @@ async def run_oneshot(argv: list[str], spec: AskSpec, env: dict[str, str], parse
             await asyncio.gather(reader, stderr_task, return_exceptions=True)
         if not reader.cancelled() and (error := reader.exception()) is not None:
             raise error
-        if timed_out:
-            raise AskFailed(FailReason.TIMEOUT, f"no result within {spec.timeout_s:g} s")
         returncode = proc.returncode if proc.returncode is not None else -1
         outcome = parser.finish(returncode, stderr.text())
-        if isinstance(outcome, Failure):
-            raise AskFailed(outcome.reason, outcome.detail)
-        data = getattr(parser, "structured_output", None)
-        if data is None:
-            raise AskFailed(FailReason.PROVIDER_ERROR, "the agent produced no structured output")
-        return Answer(data, outcome.usage, limits[-1] if limits else None)
+        if isinstance(outcome, Done) and parser.terminal is not None:
+            # The result was read in time; an agent that lingers past timeout_s after it loses nothing (as a turn ends Done).
+            data = getattr(parser, "structured_output", None)
+            if data is None:
+                raise AskFailed(FailReason.PROVIDER_ERROR, "the agent produced no structured output")
+            return Answer(data, outcome.usage, limits[-1] if limits else None)
+        if timed_out:
+            raise AskFailed(FailReason.TIMEOUT, f"no result within {spec.timeout_s:g} s")
+        assert isinstance(outcome, Failure)
+        raise AskFailed(outcome.reason, outcome.detail)

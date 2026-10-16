@@ -109,10 +109,33 @@ async def test_ask_timeout_kills_the_group(claude, tmp_path):
     """REQ-ASK-3, REQ-ASK-4, REQ-CANCEL-4: past timeout_s the call is timeout and the child it started is dead."""
     pidfile = tmp_path / "child.pid"
     with pytest.raises(AskFailed) as info:
-        await claude.ask("hi", schema=SCHEMA, timeout_s=0.5, env=env(tmp_path, mode="hang", child_pid=pidfile))
+        await claude.ask("hi", schema=SCHEMA, timeout_s=0.5, env=env(tmp_path, mode="hang", child_pid=pidfile, after=1))
     assert info.value.reason is FailReason.TIMEOUT
     assert await wait_dead(int(pidfile.read_text()))
     assert await wait_dead(record(tmp_path)["pid"])
+
+
+async def test_ask_answer_before_the_deadline_is_kept(claude, tmp_path):
+    """REQ-ASK-4, REQ-RUN-7: a result read in time is the answer even when the agent outlives timeout_s, as a turn ends Done."""
+    pidfile = tmp_path / "child.pid"
+    answer = await claude.ask("hi", schema=SCHEMA, timeout_s=1, env=env(tmp_path, mode="hang", child_pid=pidfile))
+    assert answer.data == {"word": "Yes"}
+    assert await wait_dead(record(tmp_path)["pid"])
+    assert await wait_dead(int(pidfile.read_text()))
+
+
+async def test_ask_kills_a_lingering_agent_after_the_grace(claude, tmp_path, monkeypatch):
+    """REQ-ASK-3, REQ-RUN-7: after the result the agent gets EXIT_GRACE_S to exit, then the group is killed; the call does not wait for timeout_s."""
+    import televibe.turn
+
+    monkeypatch.setattr(televibe.turn, "EXIT_GRACE_S", 0.3)
+    pidfile = tmp_path / "child.pid"
+    started = asyncio.get_running_loop().time()
+    answer = await claude.ask("hi", schema=SCHEMA, timeout_s=10, env=env(tmp_path, mode="hang", child_pid=pidfile))
+    assert answer.data == {"word": "Yes"}
+    assert asyncio.get_running_loop().time() - started < 5
+    assert await wait_dead(record(tmp_path)["pid"])
+    assert await wait_dead(int(pidfile.read_text()))
 
 
 async def test_ask_cancel_kills_the_process(claude, tmp_path):
