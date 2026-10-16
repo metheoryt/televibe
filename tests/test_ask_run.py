@@ -109,7 +109,7 @@ async def test_ask_timeout_kills_the_group(claude, tmp_path):
     """REQ-ASK-3, REQ-ASK-4, REQ-CANCEL-4: past timeout_s the call is timeout and the child it started is dead."""
     pidfile = tmp_path / "child.pid"
     with pytest.raises(AskFailed) as info:
-        await claude.ask("hi", schema=SCHEMA, timeout_s=0.5, env=env(tmp_path, mode="hang", child_pid=pidfile, after=1))
+        await claude.ask("hi", schema=SCHEMA, timeout_s=1, env=env(tmp_path, mode="hang", child_pid=pidfile, after=1))
     assert info.value.reason is FailReason.TIMEOUT
     assert await wait_dead(int(pidfile.read_text()))
     assert await wait_dead(record(tmp_path)["pid"])
@@ -142,7 +142,7 @@ async def test_ask_cancel_kills_the_process(claude, tmp_path):
     """REQ-ASK-3, REQ-ASK-4: cancelling the awaiting task kills the process; CancelledError propagates, no AskFailed."""
     pidfile = tmp_path / "child.pid"
     task = asyncio.create_task(claude.ask("hi", schema=SCHEMA, env=env(tmp_path, mode="hang", child_pid=pidfile)))
-    await wait_file(tmp_path / "record.json")
+    await wait_file(pidfile)  # the fake writes the record first, the child's pid last: wait for the child to exist
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
