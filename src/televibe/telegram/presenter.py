@@ -1,4 +1,4 @@
-"""Showing one turn in Telegram: reactions, typing or a live draft, then the answer (section 12, PRESENT)."""
+"""Showing one turn in Telegram: reactions, typing or a live draft, then the answer (section 13, PRESENT)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Telegram layer: show turns in Telegram and follow reply chains (SPEC.md section 12)."""
+"""Telegram layer: show turns in Telegram and follow reply chains (SPEC.md section 13)."""
 
 try:
     import aiogram  # noqa: F401

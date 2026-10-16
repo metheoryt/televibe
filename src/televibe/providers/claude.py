@@ -46,7 +46,7 @@ def _window(raw: Any) -> LimitWindow | None:
 
 def _limits(info: dict[str, Any]) -> Limits:
     """`unifiedWindows` is marked internal in the CLI's schema; without it, the top-level
-    fields still give the window named by `rateLimitType` (section 13)."""
+    fields still give the window named by `rateLimitType` (section 14)."""
     windows = info.get("unifiedWindows")
     windows = dict(windows) if isinstance(windows, dict) else {}
     kind = info.get("rateLimitType")

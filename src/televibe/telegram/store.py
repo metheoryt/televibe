@@ -1,4 +1,4 @@
-"""Where chains live: the bot's own storage behind a protocol (section 12, CHAIN)."""
+"""Where chains live: the bot's own storage behind a protocol (section 13, CHAIN)."""
 
 from __future__ import annotations
 

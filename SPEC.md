@@ -19,7 +19,7 @@ The caller decides everything about the conversation: when a turn starts, what
 the prompt is, which session it continues, and what happens to the output.
 The core decides nothing about presentation. It never sends a message
 anywhere and knows nothing about Telegram or any other chat. An optional layer,
-`televibe.telegram` (section 12), shows turns in Telegram and follows reply
+`televibe.telegram` (section 13), shows turns in Telegram and follows reply
 chains. It is built on the core and installed separately, as an extra.
 
 What televibe owns:
@@ -67,9 +67,8 @@ async with Engine(state_dir=Path("~/.local/state/mybot"), max_concurrent=1) as e
 
 - **REQ-API-1** — The public surface is exactly: `Engine`, `Turn`, `Session`,
   `Account`, `Access`, `ClaudeCode`, `Codex`, `FailReason`, `Stranded`, the
-  event classes of section 5 with `LimitWindow`, and `TelevibeError` with its
-  subclasses. A test
-  pins `televibe.__all__`.
+  event classes of section 5 with `LimitWindow`, `Answer`, and `TelevibeError`
+  with its subclasses (`AskFailed`). A test pins `televibe.__all__`.
 - **REQ-API-2** — Every misuse that can be caught before a process starts
   raises `TelevibeError` (or a subclass) at the call. Examples: an access level
   the provider does not support, a session from another provider, a forbidden
@@ -434,7 +433,76 @@ history is the agent's own transcript, kept in the account.
 
 ---
 
-## 12. The Telegram layer
+## 12. One-shot calls
+
+Some work needs a model and nothing else: turning a speech transcript into
+clean text, deciding what kind of message something is, pulling three fields
+out of a document. A turn is the wrong tool for it. A turn opens a session
+and keeps a transcript, waits in the engine's queue behind real turns, and
+may use tools. A one-shot call is `claude -p` with no tools, no session, no
+MCP servers and a JSON schema for the answer, on the same account as the
+turns, outside the engine.
+
+```python
+answer = await claude.ask(
+    "Говорит Максим.\n\n<расшифровка>…</расшифровка>",
+    schema={"type": "object", "required": ["text"],
+            "properties": {"text": {"type": "string"}}},
+    system="Ты чистишь расшифровку голосового сообщения…",
+    model="sonnet",
+    timeout_s=180,
+)
+answer.data["text"]
+```
+
+### ASK
+
+- **REQ-ASK-1** — `provider.ask(prompt, *, schema, system=None, model=None,
+  env={}, timeout_s=180)` runs one call and returns `Answer(data, usage,
+  limits)`: `data` is the agent's structured output, the JSON value it
+  produced against `schema`; `usage` is the agent's token counts as in
+  REQ-TURN-9; `limits` is the last `Limits` the call reported, or None.
+  Claude Code only in this version. `Codex.ask` raises `TelevibeError`
+  (section 14).
+- **REQ-ASK-2** — The command is `claude -p --output-format stream-json
+  --verbose --json-schema <schema> --tools "" --strict-mcp-config
+  --no-session-persistence`, plus `--model <model>` and `--system-prompt
+  <system>` when given. `<schema>` is the schema as compact JSON
+  (`separators=(",", ":")`, `ensure_ascii=False`). `--system-prompt`
+  replaces the agent's default system prompt, where a turn's
+  `instructions` only appends to it (REQ-CLAUDE-1). No `--permission-mode`:
+  with no tools there is nothing to permit.
+- **REQ-ASK-3** — The call runs in an empty temporary directory of its own,
+  removed when the call ends, so no `CLAUDE.md` on any path reaches it. Its
+  environment is a turn's (REQ-ENV-1 to REQ-ENV-4, the same refusals). Its
+  process is its own group, killed on timeout and when the task awaiting the
+  call is cancelled. The prompt goes to stdin, which is then closed
+  (REQ-RUN-1); stderr is read concurrently (REQ-RUN-2); after the `result`
+  record the process gets the same grace as a turn, then is killed
+  (REQ-RUN-7).
+- **REQ-ASK-4** — A call that does not return an answer raises `AskFailed`,
+  a `TelevibeError` with `reason: FailReason` and `detail: str`. The reasons
+  are a turn's: a `result` with `is_error` is `provider_error`, or
+  `usage_limit` when the call was refused at the limit (REQ-CLAUDE-3); a
+  process that cannot be started is `spawn_error`; a process that exits
+  without a `result` is `provider_error` with the stderr tail or the exit
+  code (REQ-RUN-5); a call that runs past `timeout_s` is `timeout`; a
+  cancelled call does not raise `AskFailed` — the `CancelledError` is the
+  caller's own. A `result` without `structured_output` is `provider_error`
+  saying the agent produced no structured output.
+- **REQ-ASK-5** — Misuse raises `TelevibeError` before any process starts
+  (REQ-API-2): an empty or non-UTF-8 prompt, a `schema` that is not a
+  JSON-serializable mapping, a `system` or `model` that is not a str, a
+  forbidden variable in `env`, a `timeout_s` that is not a positive finite
+  number.
+- **REQ-ASK-6** — The call writes no marker and takes no slot, lane or
+  session lock: `engine.stranded()` never reports it, and it never waits
+  behind a turn. A caller who needs to bound concurrent calls does it with a
+  semaphore of their own; televibe does not.
+
+---
+
+## 13. The Telegram layer
 
 `televibe.telegram` is an optional layer for bots that run turns from
 Telegram messages. It is a set of parts, not a framework: the bot keeps its
@@ -610,7 +678,7 @@ class ChainStore(Protocol):
 
 ---
 
-## 13. Not measured yet
+## 14. Not measured yet
 
 These are open questions, not requirements. Each one is settled by a
 measurement before it becomes a requirement.
@@ -650,8 +718,16 @@ measurement before it becomes a requirement.
   makes this harmless; whether a given group allows them is not checked.
 - **The lowest aiogram that works.** 3.31 is the version measured; the
   floor may be lower.
+- **A one-shot call on Codex.** `codex exec --output-schema <file>` exists,
+  but `codex exec --help` (codex-cli 0.161.0) shows no flag that runs it with no
+  tools, and `--output-schema` has not been recorded. `Codex.ask` refuses until it is (REQ-ASK-1).
+- **Whether `--output-format stream-json` carries `structured_output` on the
+  `result` record exactly as `--output-format json` does.** The recording
+  `claude/ask.jsonl` (Task 2) is the measurement; if it had been absent,
+  REQ-ASK-2 would have said `--output-format json` and the reader would parse
+  the whole stdout as one document.
 
-## 14. Out of scope for v1
+## 15. Out of scope for v1
 
 - Agents calling each other, account pools, and switching accounts on a limit.
   These are the next specification.
@@ -668,7 +744,7 @@ measurement before it becomes a requirement.
 - MCP servers, plugins and hooks per turn. They belong to the account.
 - Windows.
 
-## 15. Tests
+## 16. Tests
 
 - **REQ-TEST-1** — Every requirement id above appears in at least one test
   name or docstring. A test fails the build if one does not.
@@ -676,7 +752,7 @@ measurement before it becomes a requirement.
   provider through **fake agent binaries**. The fakes replay output recorded
   from real runs. Environment knobs make them hang, crash mid-stream, lose the
   session, flood stderr, or emit a broken line. The Telegram layer's tests
-  (section 12) use the same fakes and a fake `Bot` that records its calls; no
+  (section 13) use the same fakes and a fake `Bot` that records its calls; no
   test talks to Telegram.
 - **REQ-TEST-3** — Recorded outputs live in `tests/fixtures/<provider>/`, with
   the CLI version they were recorded with. Local paths and ids in them are

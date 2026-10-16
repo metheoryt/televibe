@@ -1,4 +1,4 @@
-"""Reply chains: one session per conversation that follows replies (section 12, CHAIN)."""
+"""Reply chains: one session per conversation that follows replies (section 13, CHAIN)."""
 
 from __future__ import annotations
 

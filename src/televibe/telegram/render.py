@@ -1,4 +1,4 @@
-"""An answer in the form Telegram accepts (section 12, RENDER).
+"""An answer in the form Telegram accepts (section 13, RENDER).
 
 Telegram's rich message parses GitHub-flavored Markdown itself, and the agents
 write it, so rendering is a length limit plus fallbacks.
