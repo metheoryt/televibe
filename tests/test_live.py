@@ -34,3 +34,21 @@ async def test_two_turn_session(kind, tmp_path):
             second = [e async for e in turn][-1]
         assert isinstance(second, Done), second
         assert word in second.text and second.session.id == first.session.id
+
+
+async def test_live_one_shot_call(tmp_path):
+    """REQ-ASK-1, REQ-ASK-2: a real tool-less call answers in the schema."""
+    home = os.environ.get("TELEVIBE_LIVE_CLAUDE_HOME")
+    if not home:
+        pytest.skip("set TELEVIBE_LIVE_CLAUDE_HOME to run")
+    token = os.environ.get("TELEVIBE_LIVE_CLAUDE_TOKEN")
+    claude = ClaudeCode(Account(home, credentials={"CLAUDE_CODE_OAUTH_TOKEN": token} if token else None))
+    answer = await claude.ask(
+        "Which word do people say to agree? Answer with that word only.",
+        schema={"type": "object", "additionalProperties": False, "required": ["word"],
+                "properties": {"word": {"type": "string"}}},
+        system="Answer with one English word in the field word.",
+        model="sonnet",
+    )
+    assert isinstance(answer.data, dict) and answer.data["word"].strip().lower() in {"yes", "ok", "okay", "agreed", "yeah"}
+    assert answer.usage

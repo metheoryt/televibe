@@ -34,7 +34,7 @@ section 13.
 Install: `pip install televibe`, or `pip install 'televibe[telegram]'` with the
 Telegram layer. Python 3.12+, Linux and macOS.
 
-Status: 0.1, alpha. Tests: `uv run pytest`; live tests against real agents:
+Status: 0.4, alpha. Tests: `uv run pytest`; live tests against real agents:
 see `tests/test_live.py`. MIT licensed.
 
 - [SPEC.md](https://github.com/metheoryt/televibe/blob/main/SPEC.md) is the specification. It is the law: numbered
