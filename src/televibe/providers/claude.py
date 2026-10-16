@@ -17,6 +17,7 @@ from televibe.events import (
     Started,
     ToolUse,
 )
+from televibe.oneshot import AskSpec
 from televibe.providers.base import Failure, Parser, Provider, TurnOptions
 from televibe.session import Session, reported
 
@@ -145,6 +146,18 @@ class ClaudeCode(Provider):
             argv += ["--add-dir", str(directory)]
         assert session.id is not None, "prepare() gives every Claude Code session an id"
         argv += ["--resume" if session.started else "--session-id", session.id]
+        return argv
+
+    def ask_argv(self, spec: AskSpec) -> list[str]:
+        """REQ-ASK-2: no tools, no session, no MCP, the schema as compact JSON."""
+        argv = [
+            self.binary, "-p", "--output-format", "stream-json", "--verbose",
+            "--json-schema", spec.schema_json, "--tools", "", "--strict-mcp-config", "--no-session-persistence",
+        ]
+        if spec.model:
+            argv += ["--model", spec.model]
+        if spec.system:
+            argv += ["--system-prompt", spec.system]
         return argv
 
     def parser(self, session: Session) -> Parser:

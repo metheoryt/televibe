@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, ClassVar
 
 from televibe.access import Access
 from televibe.account import Account
 from televibe.errors import TelevibeError
 from televibe.events import Done, Event, FailReason
+from televibe.oneshot import Answer
 from televibe.session import Session, parse_dump
 
 
@@ -93,6 +96,19 @@ class Provider(ABC):
     def prepare(self, session: Session) -> Session:
         """The session as the turn will run it."""
         return session
+
+    async def ask(
+        self,
+        prompt: str,
+        *,
+        schema: Mapping[str, Any],
+        system: str | None = None,
+        model: str | None = None,
+        env: Mapping[str, str] = MappingProxyType({}),
+        timeout_s: float = 180,
+    ) -> Answer:
+        """One answer in `schema`, with no session and no tools (REQ-ASK-1). Claude Code only."""
+        raise TelevibeError(f"{self.kind} has no one-shot call in this version (REQ-ASK-1)")
 
     @abstractmethod
     def argv(self, session: Session, options: TurnOptions) -> list[str]: ...
