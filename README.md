@@ -28,13 +28,15 @@ for an aiogram bot, not a framework. Every reaction can be replaced, and
 `Reactions(done=None, failed_when_sent=False)` leaves a reaction only when
 nothing could be sent at all. A live
 draft shows the usage ("5h 35% · 7d 13%"); `Texts` relabels it and words the
-limit message, and `Presenter(tz=...)` sets the zone of its reset time. See SPEC.md
-section 13.
+limit message, and `Presenter(tz=...)` sets the zone of its reset time. A
+person can also address the bot with a reaction: `reaction_added(update, "🙏")`
+says whether this update just put that emoji on a message, and a message the
+bot stored drives a turn like a live one. See SPEC.md section 13.
 
 Install: `pip install televibe`, or `pip install 'televibe[telegram]'` with the
 Telegram layer. Python 3.12+, Linux and macOS.
 
-Status: 0.4, alpha. Tests: `uv run pytest`; live tests against real agents:
+Status: 0.5, alpha. Tests: `uv run pytest`; live tests against real agents:
 see `tests/test_live.py`. MIT licensed.
 
 - [SPEC.md](https://github.com/metheoryt/televibe/blob/main/SPEC.md) is the specification. It is the law: numbered

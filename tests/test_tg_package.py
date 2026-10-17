@@ -36,7 +36,8 @@ def test_public_surface():
     from televibe.telegram import render
 
     assert sorted(layer.__all__) == [
-        "Chain", "ChainStore", "Chains", "MemoryChainStore", "Presenter", "Reactions", "Texts", "render",
+        "Chain", "ChainStore", "Chains", "MemoryChainStore", "Presenter", "Reactions", "Texts", "reaction_added",
+        "render",
     ]
     assert all(hasattr(layer, name) for name in layer.__all__)
     assert layer.render is render

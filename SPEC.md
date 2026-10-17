@@ -542,7 +542,7 @@ events and the same guarantees (section 5).
   raises `ImportError` whose message names `televibe[telegram]`.
 - **REQ-TGPKG-4** — The public surface of `televibe.telegram` is exactly:
   `Chain`, `ChainStore`, `Chains`, `MemoryChainStore`, `Presenter`,
-  `Reactions`, `Texts`, and the submodule `render`. A test pins
+  `Reactions`, `Texts`, `reaction_added`, and the submodule `render`. A test pins
   `televibe.telegram.__all__`.
 
 ### RENDER
@@ -676,6 +676,39 @@ class ChainStore(Protocol):
 - **REQ-CHAIN-9** — `await chains.link(chain, sent)` links the bot's answer to
   the chain, so a reply to the answer continues it.
 
+
+### REACTED
+
+A bot may let a person address it with a reaction: the person writes as
+usual, and a chosen emoji on a message means «this one is for you». The
+reaction update carries no message, and Telegram has no call that fetches
+one, so such a bot stores the messages it may be asked about. The policy —
+which emoji, which messages count, what the prompt is — stays the bot's.
+
+```python
+@router.message_reaction()
+async def on_reaction(update):
+    if not reaction_added(update, "🙏"):
+        return
+    message = Message.model_validate_json(stored_json(update.message_id))
+    presenter = Presenter(bot, message)
+    await presenter.accepted()
+    chain = await chains.find(message) or chains.new()   # a reply to an answer continues it
+    async with chains.turn(engine, chain, message, provider=claude, cwd=kb,
+                           prompt=message.text) as turn:
+        sent = await presenter.show(turn)
+```
+
+- **REQ-REACTED-1** — `reaction_added(update, emoji)` is true when
+  `update.new_reaction` holds `emoji` and `update.old_reaction` does not. Only
+  plain emoji reactions count: a custom or paid reaction never matches. The
+  variation selector U+FE0F is ignored on both sides, because Telegram sends
+  some emoji with it and some without.
+- **REQ-REACTED-2** — `Presenter` and `Chains` reach Telegram only through
+  the `bot` they are given, never through a method bound to the message. A
+  message rebuilt from its stored JSON, which has no bot, therefore drives a
+  turn exactly as a live one does: the answer replies to it, and when it
+  replies to a linked answer, `chains.find` returns that answer's chain.
 ---
 
 ## 14. Not measured yet
