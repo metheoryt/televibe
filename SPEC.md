@@ -619,6 +619,12 @@ heartbeat_s=8.0, model=None, tz=UTC)` shows one turn started by `message`.
   `Texts` also holds the status line's labels for the usage windows,
   `five_hour` and `seven_day`. `Texts.for_reason(reason, resets_at=None)` gives a reason's
   text, filling in the `usage_limit` template as REQ-PRESENT-5 says.
+- **REQ-PRESENT-9** — `note(text)` shows `text` in the live draft, under the
+  status and above the latest message text, from the next heartbeat on;
+  `note(None)` clears it. A bot uses it to say something while a turn runs
+  without a second message: the draft is the bubble the answer replaces, and
+  the answer is `Done.text` alone. Only a private chat has a draft, so in a
+  group a note shows nowhere.
 
 ### CHAIN
 

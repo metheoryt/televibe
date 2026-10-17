@@ -311,3 +311,23 @@ async def test_hanging_reaction_does_not_hold_the_turn(monkeypatch):
     sent = await asyncio.wait_for(presenter.show(script(Started(SESSION), 0.2, DONE)), 2)
     assert sent is not None
     assert "send_chat_action" in bot.names()
+
+
+async def test_a_note_shows_in_the_draft_and_not_in_the_answer():
+    """REQ-PRESENT-9: note() puts a line in the live draft, under the status and above the text; the answer is
+    Done.text alone, so the one bubble that was the draft becomes the answer."""
+    bot = FakeBot()
+    presenter = Presenter(bot, message("private", chat_id=7), heartbeat_s=0.05)
+
+    async def events():
+        async for event in script(Started(SESSION), Message("partial"), 0.1):
+            yield event
+        presenter.note("It will take a while.")
+        await asyncio.sleep(0.15)
+        yield DONE
+
+    await presenter.show(events())
+    drafts = [kw["rich_message"].markdown for name, kw in bot.calls if name == "send_rich_message_draft"]
+    assert "It will take a while." not in drafts[0]
+    assert drafts[-1].endswith("</tg-thinking>\n\nIt will take a while.\n\npartial")
+    assert bot.sends()[0][1]["rich_message"].markdown == "the **answer**"

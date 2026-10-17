@@ -105,6 +105,7 @@ class Presenter:
         self._reactions, self._texts = reactions, texts
         self._heartbeat_s, self._model, self._tz = heartbeat_s, model, tz
         self._text = ""
+        self._note = ""
         self._tool: str | None = None
         self._limits: Limits | None = None
         self._started_at = 0.0
@@ -112,6 +113,12 @@ class Presenter:
     async def accepted(self) -> None:
         """Mark the message as taken, before it waits in a chain (REQ-PRESENT-1)."""
         await self._react(self._reactions.queued)
+
+    def note(self, text: str | None) -> None:
+        """Show `text` in the live draft above the latest message text, from the next heartbeat on; None clears it.
+
+        Only a private chat has a draft: in a group the note shows nowhere. The answer never carries it."""
+        self._note = text or ""
 
     async def show(self, events: AsyncIterable[Event]) -> Message | None:
         """Consume a turn to its terminal event; return the sent answer, or None if no way of sending worked."""
@@ -141,7 +148,7 @@ class Presenter:
         while True:
             await self._quietly("draft", lambda: self._bot.send_rich_message_draft(
                 chat_id=self._chat_id, draft_id=self._message.message_id, message_thread_id=self._thread_id,
-                rich_message=to_draft_message(self._text, self._status())))
+                rich_message=to_draft_message(self._draft_text(), self._status())))
             await asyncio.sleep(self._heartbeat_s)
 
     async def _typing(self) -> None:
@@ -149,6 +156,9 @@ class Presenter:
             await self._quietly("typing", lambda: self._bot.send_chat_action(
                 chat_id=self._chat_id, action=ChatAction.TYPING, message_thread_id=self._thread_id))
             await asyncio.sleep(TYPING_EVERY_S)
+
+    def _draft_text(self) -> str:
+        return "\n\n".join(part for part in (self._note, self._text) if part.strip())
 
     def _status(self) -> str:
         return status_line(model=self._model, elapsed_s=time.monotonic() - self._started_at,
