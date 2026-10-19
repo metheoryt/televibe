@@ -68,13 +68,22 @@ def test_poll_description_lines_are_joined():
         "```control\noffer Да\n```\n\nmore text",  # not at the end
         "```control\noffer\n```\n```control\noffer\n```",  # two blocks
         "```control\nbutton\n```",  # unknown kind
+        "```control\npoll\n? q\n- a",  # cut off mid-block
+        "```control",  # a bare opening line
+        "```control\noffer\n```\n```control\npoll\n? q",  # the second block is cut off
     ],
 )
 def test_malformed_block_is_dropped_and_logged(bad, caplog):
     """REQ-CONTROL-1: the text is kept without any control fence, no control, a warning."""
     text, control = split_control("answer\n\n" + bad)
     assert control is None and "```control" not in text and text.startswith("answer")
-    assert "control" in caplog.text
+    assert "malformed control block" in caplog.text
+
+
+def test_text_after_the_block_is_preserved():
+    """REQ-CONTROL-1: a block not at the end is dropped, the text after it stays."""
+    text, control = split_control("answer\n\n```control\noffer Да\n```\n\nmore text")
+    assert control is None and "more text" in text and "```control" not in text
 
 
 def test_text_without_a_block_is_untouched():

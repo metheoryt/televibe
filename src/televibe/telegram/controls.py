@@ -12,6 +12,8 @@ INFO = "control"
 """The fence's info string."""
 
 _FENCE = re.compile(rf"^```{INFO}[ \t]*\n(.*?)^```[ \t]*$", re.DOTALL | re.MULTILINE)
+_OPEN = re.compile(rf"^```{INFO}[ \t]*(?:\n|$)", re.MULTILINE)
+"""An opening line that no closing fence answered: a turn cut off mid-block."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,9 +57,14 @@ def split_control(text: str) -> tuple[str, Control | None]:
     all the same and logged: the person still reads the answer.
     """
     blocks = list(_FENCE.finditer(text))
+    kept = _FENCE.sub("", text)
+    if unclosed := _OPEN.search(kept):
+        # A truncated block: nothing from its opening line on is the person's to read.
+        log.warning("televibe: malformed control block: %s", "unclosed fence")
+        return kept[: unclosed.start()].rstrip(), None
     if not blocks:
         return text, None
-    kept = _FENCE.sub("", text).rstrip()
+    kept = kept.rstrip()
     try:
         if len(blocks) > 1:
             raise _Malformed("more than one block")
