@@ -33,10 +33,45 @@ person can also address the bot with a reaction: `reaction_added(update, "🙏")
 says whether this update just put that emoji on a message, and a message the
 bot stored drives a turn like a live one. See SPEC.md section 13.
 
+### Controls
+
+An agent may end its answer with one fenced `control` block: an offer button, a
+form of tick buttons, or a poll (SPEC.md section 13, CONTROL).
+
+````text
+```control
+offer Да
+```
+
+```control
+poll multiple
+? Что из этого займы?
+- Арман 20 000
+- ничего
+```
+
+```control
+form
+- ты | *вы
+- он | она
+```
+````
+
+Pass `Presenter(..., controls=ControlTexts(...))` and the Presenter strips the
+block from the answer and sends the keyboard or the poll. televibe keeps no
+storage, so pressing is the bot's code:
+
+- a callback handler calls `parse_press(cq.data)`, ignores `None`, answers the
+  callback, and replaces the keyboard with `answered_keyboard(...)`;
+  `Chains.of(chat_id, message_id)` gives the chain of the pressed message;
+- a `poll_answer` handler maps `poll_id` back to the poll message the bot
+  recorded when it was sent. A retracted vote arrives as a `poll_answer` with
+  empty `option_ids`.
+
 Install: `pip install televibe`, or `pip install 'televibe[telegram]'` with the
 Telegram layer. Python 3.12+, Linux and macOS.
 
-Status: 0.5, alpha. Tests: `uv run pytest`; live tests against real agents:
+Status: 0.7, alpha. Tests: `uv run pytest`; live tests against real agents:
 see `tests/test_live.py`. MIT licensed.
 
 - [SPEC.md](https://github.com/metheoryt/televibe/blob/main/SPEC.md) is the specification. It is the law: numbered

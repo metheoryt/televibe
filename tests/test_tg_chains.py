@@ -16,6 +16,16 @@ async def test_find_follows_the_reply():
     assert await chains.find(message(message_id=13, reply_to=message(message_id=99))) is None
 
 
+async def test_of_finds_the_chain_of_the_message_itself():
+    """REQ-CHAIN-10: a linked bot message resolves to its own chain; an unknown one to None."""
+    store = MemoryChainStore()
+    chains = Chains(store)
+    await store.link(-1001, 77, "c1")
+    assert await chains.of(-1001, 77) == Chain("c1")
+    assert await chains.of(-1001, 78) is None
+    assert await chains.of(-2002, 77) is None
+
+
 async def test_find_is_per_chat():
     """REQ-CHAIN-1: the same message id in another chat is another message."""
     store = MemoryChainStore()

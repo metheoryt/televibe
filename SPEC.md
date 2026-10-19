@@ -542,7 +542,8 @@ events and the same guarantees (section 5).
   raises `ImportError` whose message names `televibe[telegram]`.
 - **REQ-TGPKG-4** — The public surface of `televibe.telegram` is exactly:
   `Chain`, `ChainStore`, `Chains`, `MemoryChainStore`, `Presenter`,
-  `Reactions`, `Texts`, `reaction_added`, and the submodule `render`. A test pins
+  `Reactions`, `Texts`, `reaction_added`, and the submodules `controls` and
+  `render`. A test pins
   `televibe.telegram.__all__`.
 
 ### RENDER
@@ -704,6 +705,9 @@ class ChainStore(Protocol):
   next turn starts a new session: the conversation starts over rather than failing.
 - **REQ-CHAIN-9** — `await chains.link(chain, sent)` links the bot's answer to
   the chain, so a reply to the answer continues it.
+- **REQ-CHAIN-10** — `await chains.of(chat_id, message_id)` returns the chain that
+  holds that message itself (not the one it replies to), or `None` when no chain
+  holds it. A bot uses it to find the chain of a message a person pressed a button on.
 
 
 ### REACTED
@@ -865,9 +869,9 @@ measurement before it becomes a requirement.
   `televibe.telegram` under the same rule (REQ-SCOPE-1).
 - In the Telegram layer: a stop button on the draft, forking a chain
   (REQ-CHAIN-2), a chain order that survives a restart, splitting a long answer
-  into several messages, settings per chat, deciding whether a message is
-  addressed to the bot, and choosing access by sender. The last two are the
-  bot's policy.
+  into several messages, settings per chat, a reply keyboard and Mini Apps,
+  deciding whether a message is addressed to the bot, and choosing access by
+  sender. The last two are the bot's policy.
 - MCP servers, plugins and hooks per turn. They belong to the account.
 - Windows.
 

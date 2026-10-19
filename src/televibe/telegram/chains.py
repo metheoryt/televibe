@@ -46,6 +46,11 @@ class Chains:
         chain_id = await self.store.chain_of(message.chat.id, reply.message_id)
         return Chain(chain_id) if chain_id is not None else None
 
+    async def of(self, chat_id: int, message_id: int) -> Chain | None:
+        """The chain that holds the message itself, not the one it replies to (REQ-CHAIN-10)."""
+        chain_id = await self.store.chain_of(chat_id, message_id)
+        return Chain(chain_id) if chain_id is not None else None
+
     def new(self) -> Chain:
         """A chain with a fresh id. Nothing is stored until its first turn links a message."""
         return Chain(uuid.uuid4().hex)
