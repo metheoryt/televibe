@@ -47,24 +47,27 @@ class Form:
     """Per row, the option ticked in advance."""
 
 
-type Control = Offer | Poll | Form
+Control = Offer | Poll | Form
+"""A plain union, so `isinstance(x, Control)` works."""
 
 
 class _Malformed(Exception):
     pass
 
 
-def split_control(text: str) -> tuple[str, Control | None]:
+def split_control(text: str, *, quiet: bool = False) -> tuple[str, Control | None]:
     """The answer without its control block, and the control (REQ-CONTROL-1).
 
     A text with no control fence comes back as it was. A malformed block is removed
-    all the same and logged: the person still reads the answer.
+    all the same and logged: the person still reads the answer. `quiet` logs nothing,
+    for a text read over and over while it is still being written, like a live draft.
     """
     blocks = list(_FENCE.finditer(text))
     kept = _FENCE.sub("", text)
     if unclosed := _OPEN.search(kept):
         # A truncated block: nothing from its opening line on is the person's to read.
-        log.warning("televibe: malformed control block: %s", "unclosed fence")
+        if not quiet:
+            log.warning("televibe: malformed control block: %s", "unclosed fence")
         return kept[: unclosed.start()].rstrip(), None
     if not blocks:
         return text, None
@@ -76,7 +79,8 @@ def split_control(text: str) -> tuple[str, Control | None]:
             raise _Malformed("text after the block")
         return kept, _parse(blocks[0].group(1))
     except _Malformed as why:
-        log.warning("televibe: malformed control block: %s", why)
+        if not quiet:
+            log.warning("televibe: malformed control block: %s", why)
         return kept, None
 
 
@@ -266,3 +270,8 @@ def poll_fallback_text(poll: Poll) -> str:
     head = poll.question + (f"\n{poll.description}" if poll.description else "")
     options = "\n".join(f"{i}) {option}" for i, option in enumerate(poll.options, 1))
     return f"{head}\n\n{options}"
+
+
+def form_fallback_text(form: Form) -> str:
+    """The form's rows as plain text, one row per line, for an answer that lost its keyboard (REQ-CONTROL-6)."""
+    return "\n".join(" | ".join(row) for row in form.rows)

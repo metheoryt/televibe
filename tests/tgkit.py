@@ -102,6 +102,7 @@ class FakeBot:
             date=datetime.now(UTC),
             chat=Chat(id=kwargs["chat_id"], type="supergroup"),
             message_thread_id=kwargs.get("message_thread_id"),
+            is_topic_message=True if kwargs.get("message_thread_id") is not None else None,
         )
 
     async def set_message_reaction(self, **kwargs) -> bool:

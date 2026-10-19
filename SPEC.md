@@ -630,7 +630,8 @@ heartbeat_s=8.0, model=None, tz=UTC, controls=None)` shows one turn started by `
   group a note shows nowhere.
 - **REQ-PRESENT-10** — `controls` is `None` by default, and then `Presenter` behaves
   as it did before controls: `Done.text` goes out unchanged, a control block with
-  it, and `control` and `control_message` stay `None`.
+  it, the live draft shows the latest text as it is, and `control`,
+  `control_message` and `follow_up` stay `None`.
 - **REQ-PRESENT-11** — With `controls=ControlTexts(...)`, `Done.text` is split
   with `split_control`. The answer goes out without the block. An offer's or a
   form's keyboard rides on the answer message, on every form of it (REQ-PRESENT-6).
@@ -642,11 +643,21 @@ heartbeat_s=8.0, model=None, tz=UTC, controls=None)` shows one turn started by `
   `presenter.control_message` the message carrying it (the answer for an offer
   or a form, the poll message for a poll); both are `None` when there was no
   block, the block was malformed, the poll went out as text, or the answer
-  was not sent. `show()` still returns the answer (REQ-PRESENT-2). The poll and
-  its text go to the thread the answer reached. A `Done` that is only a block
-  sends the poll's question, or "…" for an offer or a form, as the answer. If
-  Telegram rejects the keyboard itself, a last plain text goes without it and
-  there is no control.
+  was not sent. `presenter.follow_up` is the message the turn sent after the
+  answer: the poll message, or its numbered-text fallback; `None` when nothing
+  followed (no poll, or neither the poll nor its text could be sent). A bot links
+  `control_message` and `follow_up` into its chain. `show()` still returns the
+  answer (REQ-PRESENT-2). The poll goes to the forum topic the answer reached:
+  the answer's `message_thread_id` only when it is a topic message, no thread
+  otherwise (a reply outside a topic carries the replied thread's id, which is
+  no topic). Its numbered text tries that topic, then outside it. A `Done` that
+  is only a block sends the poll's question, or "…" for an offer or a form, as
+  the answer. If Telegram rejects the keyboard itself, plain text goes without
+  it, in the topic, then outside it as the last attempt, and there is no
+  control; a form's rows are appended to that text as `form_fallback_text`, so
+  its options still reach the chat. The private chat's live draft shows the
+  latest text without its control block, whole or half-written, and logs no
+  warning for it.
 - **REQ-PRESENT-12** — A `Failed` turn never shows a control: with controls on, a
   block in `Failed.partial` is stripped and no control is sent.
 
@@ -780,8 +791,13 @@ marks the option ticked in advance, at most one per row.
   thing in the text. A malformed block (a second block, text after it, an
   unknown kind, a poll with fewer than two options, a form row with fewer than
   two options or two ticks) is removed from the text all the same, logged as a
-  warning, and gives no control. A text with no `control` fence comes back
-  unchanged. The returned text is right-stripped.
+  warning, and gives no control. An opening ```` ```control ```` line with no
+  closing fence (a turn cut off mid-block) drops everything from that line to
+  the end of the text, warned the same way. `split_control(text, quiet=True)`
+  strips the same and logs nothing, for a text read while it is still being
+  written. A text with no `control` fence comes back unchanged. The returned
+  text is right-stripped. `Control` is the plain union `Offer | Poll | Form`,
+  so `isinstance(x, Control)` works.
 - **REQ-CONTROL-2** — `control_block(control)` returns the fenced block for a
   control, and `split_control` reads it back to an equal control.
 - **REQ-CONTROL-3** — `keyboard(control, texts, ticks=None)` returns the inline
@@ -806,6 +822,8 @@ marks the option ticked in advance, at most one per row.
   form's chosen option per row (`unset` where none), with `typed` appended on its
   own line. `poll_fallback_text(poll)` is the poll as text for a chat that cannot
   show one: the question, the description, a blank line, then `1) option` lines.
+  `form_fallback_text(form)` is a form's rows as text, for an answer that lost
+  its keyboard: one row per line, options separated by ` | `.
 
 ---
 

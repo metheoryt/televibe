@@ -2,6 +2,7 @@ import pytest
 from tgkit import FORM, POLL
 
 from televibe.telegram.controls import (
+    Control,
     ControlTexts,
     Form,
     Offer,
@@ -10,6 +11,7 @@ from televibe.telegram.controls import (
     answered_keyboard,
     control_block,
     form_answer,
+    form_fallback_text,
     keyboard,
     offer_answer,
     parse_press,
@@ -175,3 +177,30 @@ def test_poll_fallback_text_numbers_the_options():
         "Что из этого займы?\nПереводы людям из выписок за июль–октябрь\n\n1) Арман 20 000\n2) Лолита 50 000\n3) ничего"
     )
     assert poll_fallback_text(Poll("Q?", ("a", "b"))) == "Q?\n\n1) a\n2) b"
+
+
+def test_form_fallback_text_is_one_row_per_line():
+    """REQ-CONTROL-6: a form's rows as plain text, one per line, options separated by " | ", no tick marks."""
+    assert form_fallback_text(FORM) == "ты | вы\nон | она"
+    assert form_fallback_text(Form((("a", "b", "c"),), (None,))) == "a | b | c"
+
+
+def test_control_is_a_plain_union():
+    """REQ-CONTROL-1: `Control` works with isinstance."""
+    assert isinstance(Offer(), Control) and isinstance(POLL, Control) and isinstance(FORM, Control)
+    assert not isinstance("offer", Control)
+
+
+def test_unclosed_fence_drops_the_rest(caplog):
+    """REQ-CONTROL-1: an opening ```control line with no closing fence drops everything from it on, warned."""
+    assert split_control("Ответ\n\n```control\npoll\n? Что\n- a") == ("Ответ", None)
+    assert "unclosed fence" in caplog.text
+
+
+@pytest.mark.parametrize("text", ["A\n\n```control\noffer", "A\n\n```control\nnope\n```", "A\n```control\noffer\n```\nB"])
+def test_quiet_split_logs_nothing(text, caplog):
+    """REQ-CONTROL-1: quiet=True strips the same way and logs no warning."""
+    assert split_control(text, quiet=True) == split_control(text)
+    caplog.clear()
+    split_control(text, quiet=True)
+    assert caplog.text == ""

@@ -4,7 +4,7 @@ from datetime import timedelta, timezone
 
 import pytest
 from aiogram.exceptions import TelegramBadRequest
-from tgkit import BOT_API_REACTIONS, POLL, SESSION, FakeBot, message, script
+from tgkit import BOT_API_REACTIONS, FORM, POLL, SESSION, FakeBot, message, script
 
 from televibe.events import (
     Done,
@@ -21,6 +21,7 @@ from televibe.telegram.controls import (
     ControlTexts,
     Offer,
     control_block,
+    form_fallback_text,
     poll_fallback_text,
 )
 from televibe.telegram.presenter import Presenter, Reactions, Texts
@@ -493,3 +494,150 @@ async def test_rejected_markup_still_sends_the_answer_bare():
     name, kw = bot.sends()[-1]
     assert sent is not None and name == "send_message" and kw.get("reply_markup") is None
     assert p.control is None and p.control_message is None
+
+
+class _NoMarkup(FakeBot):
+    """Rejects every send that carries a keyboard; with `topic_fails`, also every send into a topic."""
+
+    def __init__(self, *, topic_fails: bool = False, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.topic_fails = topic_fails
+
+    async def _call(self, name, kwargs):
+        await super()._call(name, kwargs)
+        if kwargs.get("reply_markup") is not None:
+            raise TelegramBadRequest(method=None, message="Bad Request: markup rejected")
+        if self.topic_fails and kwargs.get("message_thread_id") is not None:
+            raise TelegramBadRequest(method=None, message="Bad Request: message thread not found")
+
+
+def _form_done() -> Done:
+    return Done(SESSION, "Уточни:\n\n" + control_block(FORM), {})
+
+
+async def test_poll_goes_into_the_answers_topic():
+    """REQ-PRESENT-11: an answer sent into a forum topic gets its poll in that topic."""
+    bot = FakeBot()
+    p = Presenter(bot, message(thread_id=5), controls=ControlTexts())
+    await p.show(script(Started(SESSION), _poll_done()))
+    [kw] = bot.polls()
+    assert kw["message_thread_id"] == 5 and p.control == POLL
+
+
+async def test_poll_ignores_the_thread_of_a_reply_outside_a_topic():
+    """REQ-PRESENT-11: a reply outside a topic carries the replied thread's id; the poll goes out with no thread."""
+    class ReplyThread(FakeBot):
+        def _sent(self, kwargs):
+            sent = super()._sent(kwargs)
+            return sent.model_copy(update={"message_thread_id": 77, "is_topic_message": None})
+
+    bot = ReplyThread()
+    p = Presenter(bot, message(), controls=ControlTexts())
+    await p.show(script(Started(SESSION), _poll_done()))
+    [kw] = bot.polls()
+    assert kw["message_thread_id"] is None and p.control == POLL
+
+
+async def test_poll_text_leaves_the_topic_when_the_topic_refuses_it():
+    """REQ-PRESENT-11: a refused poll's numbered text tries the answer's topic, then outside it; it is follow_up."""
+    class TopicRefusesText(FakeBot):
+        async def _call(self, name, kwargs):
+            await super()._call(name, kwargs)
+            if name == "send_message" and kwargs.get("message_thread_id") is not None:
+                raise TelegramBadRequest(method=None, message="Bad Request: message thread not found")
+
+    bot = TopicRefusesText(fail={"send_poll": 99})
+    p = Presenter(bot, message(thread_id=5), controls=ControlTexts())
+    sent = await p.show(script(Started(SESSION), _poll_done()))
+    assert sent is not None and sent.message_thread_id == 5  # the rich answer reached the topic
+    texts = [kw for name, kw in bot.sends() if name == "send_message"]
+    assert [kw.get("message_thread_id") for kw in texts] == [5, None]
+    assert all(kw["text"] == poll_fallback_text(POLL) for kw in texts)
+    assert p.follow_up is not None and p.follow_up.message_thread_id is None
+    assert p.control is None and p.control_message is None
+
+
+async def test_follow_up_is_the_poll_message():
+    """REQ-PRESENT-11: follow_up is the poll sent after the answer, the same message as control_message."""
+    bot = FakeBot()
+    p = Presenter(bot, message(), controls=ControlTexts())
+    sent = await p.show(script(Started(SESSION), _poll_done()))
+    follow_up = p.follow_up
+    assert follow_up is not None and follow_up is p.control_message and follow_up is not sent
+    assert follow_up.poll is not None
+
+
+async def test_follow_up_is_the_poll_text():
+    """REQ-PRESENT-11: a refused poll's numbered text is follow_up, so a bot can log it and link it into its chain."""
+    bot = FakeBot(fail={"send_poll": 99})
+    p = Presenter(bot, message(), controls=ControlTexts())
+    await p.show(script(Started(SESSION), _poll_done()))
+    assert p.follow_up is not None and p.follow_up.message_id == bot._last_id
+    assert p.control_message is None
+
+
+async def test_follow_up_is_none_when_nothing_followed():
+    """REQ-PRESENT-10, REQ-PRESENT-11: follow_up stays None without controls, for an offer, and when no poll text got out."""
+    for controls, done, fail in (
+        (None, _poll_done(), {}),
+        (ControlTexts(), OFFER_DONE, {}),
+        (ControlTexts(), _poll_done(), {"send_poll": 99, "send_message": 99}),
+    ):
+        p = Presenter(FakeBot(fail=fail), message(), controls=controls)
+        await p.show(script(Started(SESSION), done))
+        assert p.follow_up is None
+
+
+async def test_rejected_form_keyboard_keeps_its_rows_as_text():
+    """REQ-PRESENT-11, REQ-CONTROL-6: a form whose keyboard Telegram rejects goes out bare with its rows as text."""
+    bot = _NoMarkup()
+    p = Presenter(bot, message(), controls=ControlTexts())
+    sent = await p.show(script(Started(SESSION), _form_done()))
+    name, kw = bot.sends()[-1]
+    assert sent is not None and name == "send_message" and kw.get("reply_markup") is None
+    assert kw["text"] == "Уточни:\n\n" + form_fallback_text(FORM) == "Уточни:\n\nты | вы\nон | она"
+    assert p.control is None and p.control_message is None
+
+
+async def test_bare_answer_tries_the_topic_first():
+    """REQ-PRESENT-11, REQ-PRESENT-6: the bare answer goes into the topic when the topic takes it."""
+    bot = _NoMarkup()
+    p = Presenter(bot, message(thread_id=5), controls=ControlTexts())
+    sent = await p.show(script(Started(SESSION), OFFER_DONE))
+    _, kw = bot.sends()[-1]
+    assert sent is not None and sent.message_thread_id == 5
+    assert kw.get("reply_markup") is None and kw["message_thread_id"] == 5
+    assert kw["text"] == "Слить 31 пару?"
+
+
+async def test_bare_answer_leaves_the_topic_last():
+    """REQ-PRESENT-11, REQ-PRESENT-6: when the topic refuses the bare answer too, the last attempt leaves the topic."""
+    bot = _NoMarkup(topic_fails=True)
+    p = Presenter(bot, message(thread_id=5), controls=ControlTexts())
+    sent = await p.show(script(Started(SESSION), _form_done()))
+    bare = [kw for _, kw in bot.sends() if kw.get("reply_markup") is None]
+    assert [kw.get("message_thread_id") for kw in bare] == [5, None]
+    assert sent is not None and sent.message_thread_id is None
+    assert bare[-1]["text"].endswith(form_fallback_text(FORM)) and p.control is None
+
+
+async def test_draft_hides_the_control_block(caplog):
+    """REQ-PRESENT-11, REQ-PRESENT-9, REQ-CONTROL-1: with controls on, the draft shows no control block, whole or
+    half-written, and logs no warning for it on any heartbeat."""
+    for text in ("Q\n\n```control\noffer Да\n```", "Q\n\n```control\npoll\n? Что"):
+        bot = FakeBot()
+        p = Presenter(bot, message("private", chat_id=7), controls=ControlTexts(), heartbeat_s=0.01)
+        caplog.clear()
+        await p.show(script(Started(SESSION), Message(text), 0.05, Done(SESSION, "Q", {})))
+        drafts = [kw["rich_message"].markdown for name, kw in bot.calls if name == "send_rich_message_draft"]
+        assert drafts and all("```control" not in d and d.endswith("Q") for d in drafts)
+        assert "malformed control block" not in caplog.text
+
+
+async def test_draft_shows_the_block_with_controls_off():
+    """REQ-PRESENT-10: without controls, the draft shows the latest text as it is, as in 0.6."""
+    bot = FakeBot()
+    p = Presenter(bot, message("private", chat_id=7), heartbeat_s=0.01)
+    await p.show(script(Started(SESSION), Message("Q\n\n```control\noffer\n```"), 0.03, DONE))
+    drafts = [kw["rich_message"].markdown for name, kw in bot.calls if name == "send_rich_message_draft"]
+    assert any("```control" in d for d in drafts)

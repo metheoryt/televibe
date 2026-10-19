@@ -58,15 +58,25 @@ form
 ````
 
 Pass `Presenter(..., controls=ControlTexts(...))` and the Presenter strips the
-block from the answer and sends the keyboard or the poll. televibe keeps no
-storage, so pressing is the bot's code:
+block from the answer and sends the keyboard or the poll. After `show()`,
+`presenter.control` is the control sent, `presenter.control_message` the message
+carrying it (the answer, or the poll message), and `presenter.follow_up` the
+message sent after the answer (the poll, or its numbered text when Telegram
+refused the poll). Link `control_message` and `follow_up` into the chain like the
+answer, and record `control_message.poll.id` for a poll. televibe keeps no
+storage, so pressing is the bot's code, with
+`from televibe.telegram.controls import ControlTexts, parse_press, keyboard, answered_keyboard, ticks_after, offer_answer, form_answer, poll_answer`:
 
-- a callback handler calls `parse_press(cq.data)`, ignores `None`, answers the
-  callback, and replaces the keyboard with `answered_keyboard(...)`;
-  `Chains.of(chat_id, message_id)` gives the chain of the pressed message;
+- a callback handler calls `parse_press(cq.data)`, ignores `None`, and answers
+  the callback; `Chains.of(chat_id, message_id)` gives the chain of the pressed
+  message. A `tick` press re-renders the form with
+  `keyboard(form, texts, ticks_after(form, presses))` and starts no turn. An
+  `offer` or `done` press replaces the keyboard with `answered_keyboard(...)` and
+  is the person's answer: `offer_answer` or `form_answer` gives it as text for
+  the next turn. An `inert` press does nothing;
 - a `poll_answer` handler maps `poll_id` back to the poll message the bot
-  recorded when it was sent. A retracted vote arrives as a `poll_answer` with
-  empty `option_ids`.
+  recorded when it was sent, and `poll_answer(...)` gives the vote as text. A
+  retracted vote arrives as a `poll_answer` with empty `option_ids`.
 
 Install: `pip install televibe`, or `pip install 'televibe[telegram]'` with the
 Telegram layer. Python 3.12+, Linux and macOS.
