@@ -715,6 +715,49 @@ async def on_reaction(update):
   message rebuilt from its stored JSON, which has no bot, therefore drives a
   turn exactly as a live one does: the answer replies to it, and when it
   replies to a linked answer, `chains.find` returns that answer's chain.
+
+### CONTROL
+
+An agent may end its answer with one fenced `control` block: an offer button,
+a form of tick buttons, or a poll. The block is for the bot, not the person:
+`televibe.telegram.controls` splits it off the answer and parses it.
+
+````text
+```control
+offer Да
+```
+
+```control
+poll multiple
+? Что из этого займы?
+> Переводы людям из выписок за июль–октябрь
+- Арман 20 000
+- Лолита 50 000
+- ничего
+```
+
+```control
+form
+- ты | *вы
+- он | она
+```
+````
+
+`offer` takes an optional label. `poll` or `poll multiple` takes one `? question`,
+any number of `> description` lines (joined by newlines) and two or more
+`- option` lines. `form` takes one or more `- a | b | …` rows; a leading `*`
+marks the option ticked in advance, at most one per row.
+
+- **REQ-CONTROL-1** — `split_control(text)` returns the text without the block
+  and the control it describes. There is at most one block, and it is the last
+  thing in the text. A malformed block (a second block, text after it, an
+  unknown kind, a poll with fewer than two options, a form row with fewer than
+  two options or two ticks) is removed from the text all the same, logged as a
+  warning, and gives no control. A text with no `control` fence comes back
+  unchanged. The returned text is right-stripped.
+- **REQ-CONTROL-2** — `control_block(control)` returns the fenced block for a
+  control, and `split_control` reads it back to an equal control.
+
 ---
 
 ## 14. Not measured yet
