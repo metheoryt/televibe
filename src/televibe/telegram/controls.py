@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from typing import Literal
+
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 log = logging.getLogger(__name__)
 
@@ -153,3 +157,112 @@ def control_block(control: Control) -> str:
             for row, tick in zip(rows, ticked, strict=True):
                 lines.append("- " + " | ".join(f"*{o}" if i == tick else o for i, o in enumerate(row)))
     return "\n".join([f"```{INFO}", *lines, "```"]) + "\n"
+
+
+@dataclass(frozen=True, slots=True)
+class ControlTexts:
+    """The words a bot puts on and around its controls (REQ-CONTROL-6)."""
+
+    offer_label: str = "Yes"
+    done_label: str = "Done"
+    pressed: str = "Pressed: {label}"
+    voted: str = "Chose in the poll: {options}"
+    nothing: str = "nothing"
+    form: str = "Form: {rows}"
+    unset: str = "not chosen"
+    typed: str = "Typed: {text}"
+    answered: str = "✓ {label}"
+    answered_in_text: str = "✓ answered in text"
+
+
+@dataclass(frozen=True, slots=True)
+class Press:
+    """What a callback's data says was pressed."""
+
+    kind: Literal["offer", "tick", "done", "inert"]
+    row: int | None = None
+    option: int | None = None
+
+
+_OFFER, _DONE, _INERT = "tv:o", "tv:d", "tv:x"
+_TICK = re.compile(r"tv:t:(\d+):(\d+)")
+
+
+def keyboard(
+    control: Offer | Form, texts: ControlTexts, ticks: Sequence[int | None] | None = None
+) -> InlineKeyboardMarkup:
+    """The inline keyboard for an offer or a form (REQ-CONTROL-3).
+
+    `ticks` is the option ticked per row; None is the form's own advance ticks.
+    """
+    if isinstance(control, Offer):
+        button = InlineKeyboardButton(text=control.label or texts.offer_label, callback_data=_OFFER)
+        return InlineKeyboardMarkup(inline_keyboard=[[button]])
+    ticks = control.ticked if ticks is None else ticks
+    rows = [
+        [
+            InlineKeyboardButton(text=f"✓ {option}" if j == ticks[i] else option, callback_data=f"tv:t:{i}:{j}")
+            for j, option in enumerate(row)
+        ]
+        for i, row in enumerate(control.rows)
+    ]
+    rows.append([InlineKeyboardButton(text=texts.done_label, callback_data=_DONE)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def answered_keyboard(mark: str) -> InlineKeyboardMarkup:
+    """One button that does nothing, left under an answered control (REQ-CONTROL-3)."""
+    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=mark, callback_data=_INERT)]])
+
+
+def parse_press(data: str | None) -> Press | None:
+    """What `data` says was pressed; None when it is not televibe's (REQ-CONTROL-4)."""
+    if data == _OFFER:
+        return Press("offer")
+    if data == _DONE:
+        return Press("done")
+    if data == _INERT:
+        return Press("inert")
+    if data and (m := _TICK.fullmatch(data)):
+        return Press("tick", int(m[1]), int(m[2]))
+    return None
+
+
+def ticks_after(form: Form, presses: Iterable[Press]) -> tuple[int | None, ...]:
+    """The ticks after `presses`, from the form's advance ticks (REQ-CONTROL-5).
+
+    Pressing the ticked option unticks it. Other kinds and out-of-range ticks are ignored.
+    """
+    ticks = list(form.ticked)
+    for press in presses:
+        if press.kind != "tick" or press.row is None or press.option is None:
+            continue
+        if not (0 <= press.row < len(form.rows) and 0 <= press.option < len(form.rows[press.row])):
+            continue
+        ticks[press.row] = None if ticks[press.row] == press.option else press.option
+    return tuple(ticks)
+
+
+def offer_answer(offer: Offer, texts: ControlTexts) -> str:
+    """The person's press as text (REQ-CONTROL-6)."""
+    return texts.pressed.format(label=offer.label or texts.offer_label)
+
+
+def poll_answer(poll: Poll, option_ids: Sequence[int], texts: ControlTexts) -> str:
+    """The person's vote as text (REQ-CONTROL-6)."""
+    options = ", ".join(poll.options[i] for i in option_ids) or texts.nothing
+    return texts.voted.format(options=options)
+
+
+def form_answer(form: Form, ticks: Sequence[int | None], texts: ControlTexts, typed: str | None = None) -> str:
+    """The person's form as text, and what they typed besides (REQ-CONTROL-6)."""
+    rows = "; ".join(texts.unset if t is None else row[t] for row, t in zip(form.rows, ticks, strict=True))
+    text = texts.form.format(rows=rows)
+    return f"{text}\n{texts.typed.format(text=typed)}" if typed else text
+
+
+def poll_fallback_text(poll: Poll) -> str:
+    """The poll as plain numbered text, for a chat that cannot show one (REQ-CONTROL-6)."""
+    head = poll.question + (f"\n{poll.description}" if poll.description else "")
+    options = "\n".join(f"{i}) {option}" for i, option in enumerate(poll.options, 1))
+    return f"{head}\n\n{options}"

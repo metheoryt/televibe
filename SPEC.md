@@ -757,6 +757,28 @@ marks the option ticked in advance, at most one per row.
   unchanged. The returned text is right-stripped.
 - **REQ-CONTROL-2** — `control_block(control)` returns the fenced block for a
   control, and `split_control` reads it back to an equal control.
+- **REQ-CONTROL-3** — `keyboard(control, texts, ticks=None)` returns the inline
+  keyboard of an `Offer` (one button: its label, or `texts.offer_label`) or a
+  `Form` (its rows as given, `✓ ` before the ticked option of each row, then one
+  `texts.done_label` button). `ticks` is the option ticked per row; None is the
+  form's own advance ticks. A bot can edit the keyboard of a message it sent, so a
+  form needs no message of its own. The callback data is `tv:o` (offer),
+  `tv:t:<row>:<option>` (tick), `tv:d` (done): indices only, so it fits 64 bytes
+  at any label length. `answered_keyboard(mark)` is one button, `tv:x`, that does nothing.
+- **REQ-CONTROL-4** — `parse_press(data)` returns a `Press` (`offer`, `tick` with
+  its row and option, `done`, `inert`) for televibe's callback data, and None for
+  anything else, including None and a malformed tick.
+- **REQ-CONTROL-5** — `ticks_after(form, presses)` replays the presses over the
+  form's advance ticks and returns one tick per row. A tick press sets the row's
+  option, or clears it when that option is already ticked. Presses of other kinds
+  and ticks outside the form are ignored.
+- **REQ-CONTROL-6** — `ControlTexts` holds a bot's words for its controls (labels,
+  answer templates, the mark under an answered control). `offer_answer`,
+  `poll_answer` and `form_answer` give the person's answer as text from those
+  templates: a press, the chosen poll options (`nothing` for none), and the
+  form's chosen option per row (`unset` where none), with `typed` appended on its
+  own line. `poll_fallback_text(poll)` is the poll as text for a chat that cannot
+  show one: the question, the description, a blank line, then `1) option` lines.
 
 ---
 
