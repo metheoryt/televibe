@@ -2,8 +2,8 @@ import tomllib
 from pathlib import Path
 
 import pytest
-from replay import FIXTURES, replay
 
+from replay import FIXTURES, replay
 from televibe.access import Access
 from televibe.account import Account
 from televibe.errors import TelevibeError

@@ -4,21 +4,12 @@ import os
 from types import MappingProxyType
 
 import pytest
-from conftest import Kit, collect, run
 
+from conftest import Kit, collect, run
 from televibe.access import Access
 from televibe.engine import Engine
 from televibe.errors import TelevibeError
-from televibe.events import (
-    Done,
-    Failed,
-    FailReason,
-    Limits,
-    Message,
-    Queued,
-    Started,
-    ToolUse,
-)
+from televibe.events import Done, Failed, FailReason, Limits, Message, Queued, Started, ToolUse
 
 
 async def test_successful_turn(engine, kit: Kit):
