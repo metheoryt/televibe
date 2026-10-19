@@ -568,7 +568,7 @@ itself, so rendering is a length limit plus fallbacks.
 ### PRESENT
 
 `Presenter(bot, message, *, reactions=Reactions(), texts=Texts(),
-heartbeat_s=8.0, model=None, tz=UTC)` shows one turn started by `message`.
+heartbeat_s=8.0, model=None, tz=UTC, controls=None)` shows one turn started by `message`.
 
 | Moment | Reaction on `message` | Also |
 |---|---|---|
@@ -577,6 +577,8 @@ heartbeat_s=8.0, model=None, tz=UTC)` shows one turn started by `message`.
 | `Done`, answer sent | `reactions.done` (👌); cleared if `done` is `None` | — |
 | `Failed`, answer sent | `reactions.failed` (🤷); cleared if `failed_when_sent` is `False` | — |
 | no way of sending worked | `reactions.failed` (🤷) | — |
+| `Done`, `controls` on, block holds an offer or a form | as `Done` | the keyboard rides on the answer |
+| `Done`, `controls` on, block holds a poll | as `Done` | a poll replying to the answer, or numbered text |
 
 - **REQ-PRESENT-1** — `accepted()` sets the `queued` reaction. The bot calls it
   before `chains.turn`, so a message waiting in a chain is marked at once.
@@ -625,6 +627,23 @@ heartbeat_s=8.0, model=None, tz=UTC)` shows one turn started by `message`.
   without a second message: the draft is the bubble the answer replaces, and
   the answer is `Done.text` alone. Only a private chat has a draft, so in a
   group a note shows nowhere.
+- **REQ-PRESENT-10** — `controls` is `None` by default, and then `Presenter` behaves
+  as it did before controls: `Done.text` goes out unchanged, a control block with
+  it, and `control` and `control_message` stay `None`.
+- **REQ-PRESENT-11** — With `controls=ControlTexts(...)`, `Done.text` is split
+  with `split_control`. The answer goes out without the block. An offer's or a
+  form's keyboard rides on the answer message, on every form of it (REQ-PRESENT-6).
+  A poll is sent after the answer, non-anonymous, as a reply to it, waiting out
+  flood control like the answer; if Telegram refuses it, the numbered text of
+  `poll_fallback_text` is sent in its place, replying the same way. When no form
+  of the answer could be sent, no poll is sent either. After `show()`,
+  `presenter.control` is the control actually sent as one and
+  `presenter.control_message` the message carrying it (the answer for an offer
+  or a form, the poll message for a poll); both are `None` when there was no
+  block, the block was malformed, the poll went out as text, or the answer
+  was not sent. `show()` still returns the answer (REQ-PRESENT-2).
+- **REQ-PRESENT-12** — A `Failed` turn never shows a control: with controls on, a
+  block in `Failed.partial` is stripped and no control is sent.
 
 ### CHAIN
 

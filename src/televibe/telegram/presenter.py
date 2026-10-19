@@ -12,10 +12,24 @@ from datetime import UTC, datetime, tzinfo
 from aiogram import Bot
 from aiogram.enums import ChatAction
 from aiogram.exceptions import TelegramRetryAfter
-from aiogram.types import Message, ReactionTypeEmoji, ReplyParameters
+from aiogram.types import (
+    InlineKeyboardMarkup,
+    InputPollOption,
+    Message,
+    ReactionTypeEmoji,
+    ReplyParameters,
+)
 
 from televibe.events import Done, Event, Failed, FailReason, Limits, Started, ToolUse
 from televibe.events import Message as AgentMessage
+from televibe.telegram.controls import (
+    Control,
+    ControlTexts,
+    Poll,
+    keyboard,
+    poll_fallback_text,
+    split_control,
+)
 from televibe.telegram.render import (
     status_line,
     to_draft_message,
@@ -97,6 +111,7 @@ class Presenter:
         heartbeat_s: float = 8.0,
         model: str | None = None,
         tz: tzinfo = UTC,
+        controls: ControlTexts | None = None,
     ) -> None:
         self._bot, self._message = bot, message
         self._chat_id = message.chat.id
@@ -109,6 +124,11 @@ class Presenter:
         self._tool: str | None = None
         self._limits: Limits | None = None
         self._started_at = 0.0
+        self._controls = controls
+        self.control: Control | None = None
+        """The control actually sent as one, after `show()`; None when off, absent or unsendable (REQ-PRESENT-11)."""
+        self.control_message: Message | None = None
+        """The message carrying `control`: the answer for an offer or a form, the poll message for a poll."""
 
     async def accepted(self) -> None:
         """Mark the message as taken, before it waits in a chain (REQ-PRESENT-1)."""
@@ -177,34 +197,68 @@ class Presenter:
         return self._texts.for_reason(reason, resets_at)
 
     async def _finish(self, end: Done | Failed) -> Message | None:
+        control: Control | None = None
         if isinstance(end, Done):
             text, reaction = end.text, self._reactions.done
+            if self._controls is not None:
+                text, control = split_control(text)
         else:
             log.warning("televibe: turn failed in chat %s (%s): %s", self._chat_id, end.reason, end.detail)
             reason = self._reason_text(end.reason)
-            text = f"{end.partial}\n\n{reason}" if end.partial.strip() else reason
+            partial = split_control(end.partial)[0] if self._controls is not None else end.partial  # REQ-PRESENT-12
+            text = f"{partial}\n\n{reason}" if partial.strip() else reason
             reaction = self._reactions.failed if self._reactions.failed_when_sent else None
-        sent = await self._send(text)
+        markup = None
+        if self._controls is not None and control is not None and not isinstance(control, Poll):
+            markup = keyboard(control, self._controls)
+        sent = await self._send(text, markup)
+        if sent is not None and control is not None:
+            if isinstance(control, Poll):
+                await self._send_poll(control, sent)
+            else:
+                self.control, self.control_message = control, sent
         await self._react(reaction if sent is not None else self._reactions.failed)
         return sent
 
-    async def _send(self, text: str) -> Message | None:
+    async def _send_poll(self, poll: Poll, answer: Message) -> None:
+        """A non-anonymous poll replying to the answer; one Telegram refuses goes out as numbered text (REQ-PRESENT-11)."""
+        reply = ReplyParameters(message_id=answer.message_id, allow_sending_without_reply=True)
+        sent = await self._try("the poll", [("a poll", lambda: self._bot.send_poll(
+            chat_id=self._chat_id, message_thread_id=self._thread_id, question=poll.question,
+            options=[InputPollOption(text=option) for option in poll.options], is_anonymous=False,
+            allows_multiple_answers=poll.multiple, description=poll.description, reply_parameters=reply))])
+        if sent is not None:
+            self.control, self.control_message = poll, sent
+            return
+        text = poll_fallback_text(poll)
+        await self._try("the poll as text", [("plain text", lambda: self._bot.send_message(
+            chat_id=self._chat_id, message_thread_id=self._thread_id,
+            text=text, parse_mode=None, reply_parameters=reply))])
+
+    async def _send(self, text: str, markup: InlineKeyboardMarkup | None = None) -> Message | None:
         """A turn never ends in silence (REQ-PRESENT-6): rich, plain, plain outside the topic.
 
-        Flood control is waited out and the same form retried, within RETRY_WAIT_MAX_S in all:
-        stepping down would hit the same limit. Any other failure steps down to the next form."""
+        `markup` rides on every form (REQ-PRESENT-11)."""
         reply = ReplyParameters(message_id=self._message.message_id, allow_sending_without_reply=True)
         attempts: list[tuple[str, Callable[[], Awaitable[Message]]]] = [
             ("a rich message", lambda: self._bot.send_rich_message(
                 chat_id=self._chat_id, message_thread_id=self._thread_id,
-                rich_message=to_rich_message(text), reply_parameters=reply)),
+                rich_message=to_rich_message(text), reply_parameters=reply, reply_markup=markup)),
             ("plain text", lambda: self._bot.send_message(
                 chat_id=self._chat_id, message_thread_id=self._thread_id,
-                text=to_plain_text(text), parse_mode=None, reply_parameters=reply)),
+                text=to_plain_text(text), parse_mode=None, reply_parameters=reply, reply_markup=markup)),
         ]
         if self._thread_id is not None:
             attempts.append(("plain text outside the topic", lambda: self._bot.send_message(
-                chat_id=self._chat_id, text=to_plain_text(text), parse_mode=None, reply_parameters=reply)))
+                chat_id=self._chat_id, text=to_plain_text(text), parse_mode=None, reply_parameters=reply,
+                reply_markup=markup)))
+        return await self._try("the answer", attempts)
+
+    async def _try(self, what_sent: str, attempts: list[tuple[str, Callable[[], Awaitable[Message]]]]) -> Message | None:
+        """The first form of `attempts` that goes out.
+
+        Flood control is waited out and the same form retried, within RETRY_WAIT_MAX_S in all:
+        stepping down would hit the same limit. Any other failure steps down to the next form."""
         waited = 0.0
         for what, attempt in attempts:
             for retry in range(_FLOOD_RETRIES + 1):
@@ -212,14 +266,14 @@ class Presenter:
                     return await attempt()
                 except TelegramRetryAfter as exc:
                     if retry == _FLOOD_RETRIES or waited + exc.retry_after > RETRY_WAIT_MAX_S:
-                        log.warning("televibe: sending the answer as %s hit flood control in chat %s", what, self._chat_id)
+                        log.warning("televibe: sending %s as %s hit flood control in chat %s", what_sent, what, self._chat_id)
                         break
                     waited += exc.retry_after
                     await asyncio.sleep(exc.retry_after)
                 except Exception:
-                    log.warning("televibe: sending the answer as %s failed in chat %s", what, self._chat_id, exc_info=True)
+                    log.warning("televibe: sending %s as %s failed in chat %s", what_sent, what, self._chat_id, exc_info=True)
                     break
-        log.error("televibe: every way of sending the answer failed in chat %s", self._chat_id)
+        log.error("televibe: every way of sending %s failed in chat %s", what_sent, self._chat_id)
         return None
 
     async def _react(self, emoji: str | None) -> None:

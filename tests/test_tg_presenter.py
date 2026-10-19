@@ -3,6 +3,7 @@ import dataclasses
 from datetime import timedelta, timezone
 
 import pytest
+from test_tg_controls import POLL
 from tgkit import BOT_API_REACTIONS, SESSION, FakeBot, message, script
 
 from televibe.events import (
@@ -16,6 +17,12 @@ from televibe.events import (
     ToolUse,
 )
 from televibe.telegram import presenter as presenter_module
+from televibe.telegram.controls import (
+    ControlTexts,
+    Offer,
+    control_block,
+    poll_fallback_text,
+)
 from televibe.telegram.presenter import Presenter, Reactions, Texts
 
 DONE = Done(SESSION, "the **answer**", {})
@@ -331,3 +338,98 @@ async def test_a_note_shows_in_the_draft_and_not_in_the_answer():
     assert "It will take a while." not in drafts[0]
     assert drafts[-1].endswith("</tg-thinking>\n\nIt will take a while.\n\npartial")
     assert bot.sends()[0][1]["rich_message"].markdown == "the **answer**"
+
+
+OFFER_DONE = Done(SESSION, "Слить 31 пару?\n\n```control\noffer Да\n```", {})
+
+
+def _poll_done() -> Done:
+    return Done(SESSION, "Вопрос\n\n" + control_block(POLL), {})
+
+
+async def test_controls_off_sends_the_block_verbatim():
+    """REQ-PRESENT-10: without controls=..., Done.text goes out unchanged and nothing else is sent."""
+    bot = FakeBot()
+    p = Presenter(bot, message())
+    await p.show(script(Started(SESSION), OFFER_DONE))
+    [(_, kw)] = bot.sends()
+    assert "```control" in kw["rich_message"].markdown and kw.get("reply_markup") is None
+    assert p.control is None and p.control_message is None
+
+
+async def test_offer_rides_on_the_answer():
+    """REQ-PRESENT-11: the text without the block, the keyboard on the same message."""
+    bot = FakeBot()
+    p = Presenter(bot, message(), controls=ControlTexts())
+    sent = await p.show(script(Started(SESSION), OFFER_DONE))
+    [(_, kw)] = bot.sends()
+    assert kw["rich_message"].markdown == "Слить 31 пару?"
+    assert kw["reply_markup"].inline_keyboard[0][0].callback_data == "tv:o"
+    assert p.control == Offer("Да") and p.control_message is sent
+
+
+async def test_keyboard_survives_the_plain_fallback():
+    """REQ-PRESENT-11, REQ-PRESENT-6: a rejected rich message falls back to plain text, keyboard and all."""
+    bot = FakeBot(fail={"send_rich_message": 99})
+    p = Presenter(bot, message(), controls=ControlTexts())
+    sent = await p.show(script(Started(SESSION), OFFER_DONE))
+    name, kw = bot.sends()[-1]
+    assert name == "send_message" and kw["reply_markup"] is not None
+    assert p.control_message is sent
+
+
+async def test_poll_follows_the_answer_as_a_reply():
+    """REQ-PRESENT-11: a non-anonymous poll replying to the answer; it is the control message."""
+    bot = FakeBot()
+    p = Presenter(bot, message(), controls=ControlTexts())
+    sent = await p.show(script(Started(SESSION), _poll_done()))
+    [kw] = bot.polls()
+    assert kw["is_anonymous"] is False and kw["allows_multiple_answers"] is True
+    assert kw["reply_parameters"].message_id == sent.message_id and kw["description"] == POLL.description
+    assert p.control == POLL and p.control_message.poll.id.startswith("poll-")
+    assert "```control" not in bot.sends()[0][1]["rich_message"].markdown
+
+
+async def test_rejected_poll_becomes_text():
+    """REQ-PRESENT-11: a poll Telegram refuses still reaches the chat, as numbered text replying to the answer."""
+    bot = FakeBot(fail={"send_poll": 99})
+    p = Presenter(bot, message(), controls=ControlTexts())
+    sent = await p.show(script(Started(SESSION), _poll_done()))
+    name, kw = bot.sends()[-1]
+    assert kw["text"] == poll_fallback_text(POLL) and kw["reply_parameters"].message_id == sent.message_id
+    assert p.control is None and p.control_message is None
+
+
+async def test_poll_waits_out_flood_control():
+    """REQ-PRESENT-11: a poll send waits out flood control like the answer."""
+    bot = FakeBot(flood={"send_poll": 1})
+    p = Presenter(bot, message(), controls=ControlTexts())
+    await p.show(script(Started(SESSION), _poll_done()))
+    assert len(bot.polls()) == 2 and p.control == POLL
+
+
+async def test_failed_turn_never_shows_a_block():
+    """REQ-PRESENT-12: with controls on, a block in Failed.partial is stripped and no control is sent."""
+    bot = FakeBot()
+    failed = Failed(FailReason.TIMEOUT, SESSION, "", "half\n\n```control\noffer\n```")
+    p = Presenter(bot, message(), controls=ControlTexts())
+    await p.show(script(Started(SESSION), failed))
+    kw = bot.sends()[0][1]
+    assert "```control" not in kw["rich_message"].markdown and p.control is None
+    assert kw["rich_message"].markdown == "half\n\n" + Texts().timeout and kw.get("reply_markup") is None
+
+
+async def test_no_answer_no_poll():
+    """REQ-PRESENT-11: when no form of the answer could be sent, the poll is not sent either."""
+    bot = FakeBot(fail={"send_rich_message": 99, "send_message": 99})
+    p = Presenter(bot, message(), controls=ControlTexts())
+    await p.show(script(Started(SESSION), _poll_done()))
+    assert "send_poll" not in bot.names() and p.control is None and p.control_message is None
+
+
+async def test_no_answer_no_offer():
+    """REQ-PRESENT-11: an offer whose answer could not be sent leaves control and control_message None."""
+    bot = FakeBot(fail={"send_rich_message": 99, "send_message": 99})
+    p = Presenter(bot, message(), controls=ControlTexts())
+    await p.show(script(Started(SESSION), OFFER_DONE))
+    assert p.control is None and p.control_message is None

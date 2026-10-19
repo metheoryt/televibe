@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
-from aiogram.types import Chat, Message, User
+from aiogram.types import Chat, Message, Poll, PollOption, User
 
 from televibe.session import Session
 
@@ -71,6 +71,9 @@ class FakeBot:
     def sends(self) -> list[tuple[str, dict]]:
         return [(name, kw) for name, kw in self.calls if name in ("send_rich_message", "send_message")]
 
+    def polls(self) -> list[dict]:
+        return [kw for name, kw in self.calls if name == "send_poll"]
+
     async def _call(self, name: str, kwargs: dict) -> None:
         self.calls.append((name, kwargs))
         if name in self.hang:
@@ -111,6 +114,28 @@ class FakeBot:
         await self._call("send_message", kwargs)
         return self._sent(kwargs)
 
+    async def send_poll(self, **kwargs) -> Message:
+        await self._call("send_poll", kwargs)
+        sent = self._sent(kwargs)
+        poll = Poll(
+            id=f"poll-{sent.message_id}", question=kwargs["question"],
+            options=[PollOption(persistent_id=str(i), text=o.text, voter_count=0) for i, o in enumerate(kwargs["options"])],
+            total_voter_count=0, is_closed=False, is_anonymous=kwargs["is_anonymous"], type="regular",
+            allows_multiple_answers=kwargs["allows_multiple_answers"], allows_revoting=True, members_only=False)
+        return sent.model_copy(update={"poll": poll})
+
+    async def stop_poll(self, **kwargs) -> bool:
+        await self._call("stop_poll", kwargs)
+        return True
+
+    async def edit_message_reply_markup(self, **kwargs) -> bool:
+        await self._call("edit_message_reply_markup", kwargs)
+        return True
+
+    async def answer_callback_query(self, **kwargs) -> bool:
+        await self._call("answer_callback_query", kwargs)
+        return True
+
 
 async def script(*steps):
     """Yield core events in order; a number among the steps is a pause in seconds."""
@@ -119,3 +144,4 @@ async def script(*steps):
             await asyncio.sleep(step)
         else:
             yield step
+
