@@ -1,4 +1,5 @@
 import pytest
+from tgkit import FORM, POLL
 
 from televibe.telegram.controls import (
     ControlTexts,
@@ -38,14 +39,6 @@ form
 - он | она
 ```
 """
-
-POLL = Poll(
-    "Что из этого займы?",
-    ("Арман 20 000", "Лолита 50 000", "ничего"),
-    True,
-    "Переводы людям из выписок за июль–октябрь",
-)
-FORM = Form((("ты", "вы"), ("он", "она")), (1, None))
 
 
 def test_offer_block_is_split_off():

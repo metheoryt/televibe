@@ -3,8 +3,8 @@ import dataclasses
 from datetime import timedelta, timezone
 
 import pytest
-from test_tg_controls import POLL
-from tgkit import BOT_API_REACTIONS, SESSION, FakeBot, message, script
+from aiogram.exceptions import TelegramBadRequest
+from tgkit import BOT_API_REACTIONS, POLL, SESSION, FakeBot, message, script
 
 from televibe.events import (
     Done,
@@ -432,4 +432,64 @@ async def test_no_answer_no_offer():
     bot = FakeBot(fail={"send_rich_message": 99, "send_message": 99})
     p = Presenter(bot, message(), controls=ControlTexts())
     await p.show(script(Started(SESSION), OFFER_DONE))
+    assert p.control is None and p.control_message is None
+
+
+async def test_a_block_alone_still_sends_the_question():
+    """REQ-PRESENT-11, REQ-PRESENT-6: a Done that is only a poll block sends the poll's question as the answer."""
+    bot = FakeBot()
+    p = Presenter(bot, message(), controls=ControlTexts())
+    await p.show(script(Started(SESSION), Done(SESSION, control_block(POLL), {})))
+    assert bot.sends()[0][1]["rich_message"].markdown == POLL.question and p.control == POLL
+
+
+async def test_an_offer_alone_sends_an_ellipsis():
+    """REQ-PRESENT-11, REQ-PRESENT-6: a Done that is only an offer block sends "…" under the button."""
+    bot = FakeBot()
+    p = Presenter(bot, message(), controls=ControlTexts())
+    await p.show(script(Started(SESSION), Done(SESSION, "```control\noffer Да\n```", {})))
+    [(_, kw)] = bot.sends()
+    assert kw["rich_message"].markdown == "…" and kw["reply_markup"] is not None and p.control == Offer("Да")
+
+
+async def test_poll_goes_to_the_thread_the_answer_reached():
+    """REQ-PRESENT-11: an answer that only got out outside the topic gets its poll there too, not into the topic."""
+    bot = FakeBot(fail={"send_rich_message": 99, "send_message": 1})
+    p = Presenter(bot, message(thread_id=5), controls=ControlTexts())
+    sent = await p.show(script(Started(SESSION), _poll_done()))
+    assert sent is not None and sent.message_thread_id is None
+    [kw] = bot.polls()
+    assert kw["message_thread_id"] is None and p.control == POLL
+
+
+async def test_poll_fallback_text_goes_to_the_answers_thread():
+    """REQ-PRESENT-11: the numbered text of a refused poll replies in the answer's own thread."""
+    bot = FakeBot(fail={"send_rich_message": 99, "send_message": 1, "send_poll": 99})
+    p = Presenter(bot, message(thread_id=5), controls=ControlTexts())
+    await p.show(script(Started(SESSION), _poll_done()))
+    kw = bot.sends()[-1][1]
+    assert kw["text"] == poll_fallback_text(POLL) and kw.get("message_thread_id") is None
+
+
+async def test_poll_parse_modes_are_off():
+    """REQ-PRESENT-11: the question and description go out as plain text."""
+    bot = FakeBot()
+    await Presenter(bot, message(), controls=ControlTexts()).show(script(Started(SESSION), _poll_done()))
+    [kw] = bot.polls()
+    assert kw["question_parse_mode"] is None and kw["description_parse_mode"] is None
+
+
+async def test_rejected_markup_still_sends_the_answer_bare():
+    """REQ-PRESENT-11, REQ-PRESENT-6: if every form with the keyboard fails, the answer goes out without it; no control."""
+    class NoMarkup(FakeBot):
+        async def _call(self, name, kwargs):
+            await super()._call(name, kwargs)
+            if kwargs.get("reply_markup") is not None:
+                raise TelegramBadRequest(method=None, message="Bad Request: markup rejected")
+
+    bot = NoMarkup()
+    p = Presenter(bot, message(), controls=ControlTexts())
+    sent = await p.show(script(Started(SESSION), OFFER_DONE))
+    name, kw = bot.sends()[-1]
+    assert sent is not None and name == "send_message" and kw.get("reply_markup") is None
     assert p.control is None and p.control_message is None

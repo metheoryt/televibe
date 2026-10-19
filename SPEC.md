@@ -641,7 +641,11 @@ heartbeat_s=8.0, model=None, tz=UTC, controls=None)` shows one turn started by `
   `presenter.control_message` the message carrying it (the answer for an offer
   or a form, the poll message for a poll); both are `None` when there was no
   block, the block was malformed, the poll went out as text, or the answer
-  was not sent. `show()` still returns the answer (REQ-PRESENT-2).
+  was not sent. `show()` still returns the answer (REQ-PRESENT-2). The poll and
+  its text go to the thread the answer reached. A `Done` that is only a block
+  sends the poll's question, or "…" for an offer or a form, as the answer. If
+  Telegram rejects the keyboard itself, a last plain text goes without it and
+  there is no control.
 - **REQ-PRESENT-12** — A `Failed` turn never shows a control: with controls on, a
   block in `Failed.partial` is stripped and no control is sent.
 

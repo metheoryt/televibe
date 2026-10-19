@@ -9,8 +9,18 @@ from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import Chat, Message, Poll, PollOption, User
 
 from televibe.session import Session
+from televibe.telegram.controls import Form
+from televibe.telegram.controls import Poll as ControlPoll
 
 SESSION = Session("claude", Path("/home/acc"), Path("/work"), "s-1", True)
+
+POLL = ControlPoll(
+    "Что из этого займы?",
+    ("Арман 20 000", "Лолита 50 000", "ничего"),
+    True,
+    "Переводы людям из выписок за июль–октябрь",
+)
+FORM = Form((("ты", "вы"), ("он", "она")), (1, None))
 
 # The Bot API's list of emoji a bot may set as a reaction (ReactionTypeEmoji).
 BOT_API_REACTIONS = frozenset(

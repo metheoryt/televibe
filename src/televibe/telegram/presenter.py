@@ -202,6 +202,8 @@ class Presenter:
             text, reaction = end.text, self._reactions.done
             if self._controls is not None:
                 text, control = split_control(text)
+                if not text.strip() and control is not None:  # a block alone is no silence (REQ-PRESENT-6)
+                    text = control.question if isinstance(control, Poll) else "…"
         else:
             log.warning("televibe: turn failed in chat %s (%s): %s", self._chat_id, end.reason, end.detail)
             reason = self._reason_text(end.reason)
@@ -211,8 +213,8 @@ class Presenter:
         markup = None
         if self._controls is not None and control is not None and not isinstance(control, Poll):
             markup = keyboard(control, self._controls)
-        sent = await self._send(text, markup)
-        if sent is not None and control is not None:
+        sent, with_markup = await self._send(text, markup)
+        if sent is not None and control is not None and with_markup:
             if isinstance(control, Poll):
                 await self._send_poll(control, sent)
             else:
@@ -221,10 +223,13 @@ class Presenter:
         return sent
 
     async def _send_poll(self, poll: Poll, answer: Message) -> None:
-        """A non-anonymous poll replying to the answer; one Telegram refuses goes out as numbered text (REQ-PRESENT-11)."""
+        """A non-anonymous poll replying to the answer, in the answer's own thread; one Telegram refuses
+        goes out as numbered text, and then `control` and `control_message` stay None (REQ-PRESENT-11)."""
+        thread_id = answer.message_thread_id
         reply = ReplyParameters(message_id=answer.message_id, allow_sending_without_reply=True)
         sent = await self._try("the poll", [("a poll", lambda: self._bot.send_poll(
-            chat_id=self._chat_id, message_thread_id=self._thread_id, question=poll.question,
+            chat_id=self._chat_id, message_thread_id=thread_id, question=poll.question,
+            question_parse_mode=None, description_parse_mode=None,
             options=[InputPollOption(text=option) for option in poll.options], is_anonymous=False,
             allows_multiple_answers=poll.multiple, description=poll.description, reply_parameters=reply))])
         if sent is not None:
@@ -232,13 +237,14 @@ class Presenter:
             return
         text = poll_fallback_text(poll)
         await self._try("the poll as text", [("plain text", lambda: self._bot.send_message(
-            chat_id=self._chat_id, message_thread_id=self._thread_id,
+            chat_id=self._chat_id, message_thread_id=thread_id,
             text=text, parse_mode=None, reply_parameters=reply))])
 
-    async def _send(self, text: str, markup: InlineKeyboardMarkup | None = None) -> Message | None:
+    async def _send(self, text: str, markup: InlineKeyboardMarkup | None = None) -> tuple[Message | None, bool]:
         """A turn never ends in silence (REQ-PRESENT-6): rich, plain, plain outside the topic.
 
-        `markup` rides on every form (REQ-PRESENT-11)."""
+        `markup` rides on every form (REQ-PRESENT-11); if Telegram rejects it, a last plain text goes
+        without it. Returns the message and whether the markup is on it."""
         reply = ReplyParameters(message_id=self._message.message_id, allow_sending_without_reply=True)
         attempts: list[tuple[str, Callable[[], Awaitable[Message]]]] = [
             ("a rich message", lambda: self._bot.send_rich_message(
@@ -252,7 +258,12 @@ class Presenter:
             attempts.append(("plain text outside the topic", lambda: self._bot.send_message(
                 chat_id=self._chat_id, text=to_plain_text(text), parse_mode=None, reply_parameters=reply,
                 reply_markup=markup)))
-        return await self._try("the answer", attempts)
+        sent = await self._try("the answer", attempts)
+        if sent is not None or markup is None:
+            return sent, True
+        bare: list[tuple[str, Callable[[], Awaitable[Message]]]] = [("plain text without the markup", lambda: self._bot.send_message(
+            chat_id=self._chat_id, text=to_plain_text(text), parse_mode=None, reply_parameters=reply))]
+        return await self._try("the answer", bare), False
 
     async def _try(self, what_sent: str, attempts: list[tuple[str, Callable[[], Awaitable[Message]]]]) -> Message | None:
         """The first form of `attempts` that goes out.
