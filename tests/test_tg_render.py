@@ -35,6 +35,25 @@ def test_rich_message_is_never_empty():
     assert to_rich_message("  \n\t").markdown == "_(no output)_"
 
 
+def test_rich_message_keeps_line_breaks():
+    """REQ-RENDER-4: a line followed by a non-blank line ends in a hard break; blank lines stay as they are."""
+    assert to_rich_message("Schedule\n14.11: 98 750\n14.12: 98 750\n\nAfter").markdown == (
+        "Schedule  \n14.11: 98 750  \n14.12: 98 750\n\nAfter"
+    )
+    assert to_rich_message("already  \nbroken\\\nhere").markdown == "already  \nbroken\\\nhere"
+
+
+def test_rich_message_leaves_code_fences_alone():
+    """REQ-RENDER-4: inside a fence the spaces would show, so the lines are sent as written."""
+    text = "intro\n```\nx = 1\ny = 2\n```\n~~~\na\nb\n~~~\noutro\nend"
+    assert to_rich_message(text).markdown == "intro  \n```\nx = 1\ny = 2\n```\n~~~\na\nb\n~~~\noutro  \nend"
+
+
+def test_draft_keeps_line_breaks():
+    """REQ-RENDER-4: a draft shows the lines the way the answer will."""
+    assert to_draft_message("one\ntwo", "0:01").markdown == "<tg-thinking>0:01</tg-thinking>\n\none  \ntwo"
+
+
 def test_plain_text_limit_and_empty():
     """REQ-RENDER-2: plain text is at most 4096 characters, closes a cut fence, and is never empty."""
     assert to_plain_text("hello") == "hello"

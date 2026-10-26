@@ -550,7 +550,7 @@ events and the same guarantees (section 5).
 
 `televibe.telegram.render` turns an answer into what Telegram accepts. The
 answer is GitHub-flavored Markdown, which Telegram's rich message parses
-itself, so rendering is a length limit plus fallbacks.
+itself, so rendering is a length limit, kept line breaks, plus fallbacks.
 
 - **REQ-RENDER-1** — `to_rich_message(text)` returns a rich message of at most
   32768 characters. A longer text is cut, an unclosed code fence is closed,
@@ -565,6 +565,14 @@ itself, so rendering is a length limit plus fallbacks.
   each as a label and a whole percent, then the current tool. Angle brackets
   from a model, label or tool name are replaced, so a name cannot break the
   thinking block.
+- **REQ-RENDER-4** — In a rich message and a draft, every line break outside a
+  code fence is a line break. Markdown joins two lines split by a single
+  newline into one, so an answer written line by line (a payment schedule)
+  arrived as one run-on paragraph (2026-10-26). A line followed by a non-blank
+  line gets two trailing spaces, Markdown's hard break; Telegram keeps it, and
+  it leaves headings, lists, tables and quotes intact (measured on a live bot
+  the same day). Inside a fence nothing changes: the spaces would show. Plain
+  text needs none of this.
 
 ### PRESENT
 
